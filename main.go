@@ -110,7 +110,7 @@ func init() {
 	getopt.FlagLong(&Config.OutDirectory, "outdir", 'o', "output directory for stdout files")
 	getopt.FlagLong(&Config.ErrDirectory, "errdir", 'e', "output directory for stderr files")
 
-	getopt.FlagLong(&Config.DefaultUser, "default-user", 'U', "default user if user id of the remote server")
+	getopt.FlagLong(&Config.DefaultUser, "default-user", 0, "default user if user id of the remote server")
 
 }
 
