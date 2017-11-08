@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"reflect"
 
 	"github.com/Knetic/govaluate"
@@ -19,6 +18,10 @@ var UserFunctions = map[string]govaluate.ExpressionFunction{
 	},
 
 	"contains": func(args ...interface{}) (interface{}, error) {
+		/*
+					 Usage: contains(tags, "role", "zookeeper")  => contains(MAP, STRING(role), STRING(zookeeper)
+			                 Usage: contains(network, "1234-321")        => contains(STRING(NETWORK[0]), STRING(NETWORK[1]), ..., "1234-321")
+		*/
 		if len(args) < 2 {
 			return struct{}{}, fmt.Errorf("wrong number of argument(s) on contains(LIST, OBJECT)")
 		}
@@ -37,8 +40,9 @@ var UserFunctions = map[string]govaluate.ExpressionFunction{
 				if !ok {
 					return struct{}{}, fmt.Errorf("non-string keys are not supported: %T(%v)", args[1], args[1])
 				}
-				v, ok := m[k]
-				fmt.Printf("MAP existence m[%v], value = %v\n", m, v)
+				_, ok = m[k]
+				// v, ok := m[k]
+				//fmt.Printf("MAP existence m[%v], value = %v\n", m, v)
 				return ok, nil
 			} else {
 				if (len(args)-1)%2 != 0 {
@@ -49,7 +53,7 @@ var UserFunctions = map[string]govaluate.ExpressionFunction{
 					return struct{}{}, fmt.Errorf("maps with non-string key are not supported: %T(%v)", args[0], args[0])
 				}
 
-				for i := 1; i < len(args[1:]); i += 2 {
+				for i := 1; i < len(args); i += 2 {
 					k, ok := args[i].(string)
 					if !ok {
 						return struct{}{}, fmt.Errorf("non-string keys are not supported: %T(%v)", args[i], args[i])
@@ -65,8 +69,8 @@ var UserFunctions = map[string]govaluate.ExpressionFunction{
 			}
 		}
 
-		for i, a := range args[:len(args)-1] {
-			fmt.Printf("arg[%d]%T = %v\n", i, a, a)
+		for _, a := range args[:len(args)-1] {
+			//fmt.Printf("arg[%d]%T = %v\n", i, a, a)
 			switch s := a.(type) {
 			case string:
 				if t, ok := target.(string); !ok {
@@ -105,8 +109,7 @@ func Evaluate(instance *compute.Instance, expression string) (bool, error) {
 	ev, err := govaluate.NewEvaluableExpressionWithFunctions(expression, UserFunctions)
 
 	if err != nil {
-		fmt.Printf("error: on parse %s\n", err)
-		os.Exit(1)
+		return false, fmt.Errorf("parse error: %s\n", err)
 	}
 
 	result, err := ev.Evaluate(context)

@@ -45,3 +45,10 @@ First, select a machine named `gong`, and let's run `uptime` on it:
 You'll see the output that `uptime` successful on the machine where the id is `6cc24b15-1df7-4492-f893-92fe3aff91b0`. 
 
 TODO: complete the documentation
+
+
+        $ triton-pssh -i 'contains(tags, "role", "zookeeper")' ::: uptime
+        $ triton-pssh -i 'ispublic(networks)' ::: uptime
+        $ triton-pssh -i '!ispublic(networks)' ::: uptime
+        $ triton-pssh -i 'brand != "lx"' ::: hostname
+        $ triton-pssh -i 'memory >= 1024' ::: hostname
