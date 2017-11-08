@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	triton "github.com/joyent/triton-go"
@@ -19,6 +20,7 @@ import (
 	"github.com/logrusorgru/aurora"
 	"github.com/pborman/getopt/v2"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 var instanceChannel = make(chan compute.Instance, 1)
@@ -57,8 +59,8 @@ type TsshConfig struct {
 	BastionName string // Triton instance name
 	BastionPort int
 
-	Deadline time.Duration
-	Timeout  time.Duration
+	Deadline int // time.Duration
+	Timeout  int // time.Duration
 
 	InlineOutput bool
 	OutDirectory string
@@ -66,6 +68,10 @@ type TsshConfig struct {
 	Parallelism  int
 
 	DefaultUser string
+
+	AskPassword  bool
+	AskOnce      sync.Once
+	PasswordAuth ssh.AuthMethod
 }
 
 var Config TsshConfig = TsshConfig{
@@ -77,8 +83,8 @@ var Config TsshConfig = TsshConfig{
 
 	InlineOutput: false,
 
-	Timeout:  time.Duration(5) * time.Second,
-	Deadline: time.Duration(10) * time.Second,
+	Timeout:  5,
+	Deadline: 20,
 
 	Parallelism: 32,
 	DefaultUser: "root",
@@ -101,8 +107,8 @@ func init() {
 	getopt.FlagLong(&Config.BastionName, "bastion", 'b', "bastion server address")
 	getopt.FlagLong(&Config.BastionPort, "bastion-port", 0, "bastion server port")
 
-	getopt.FlagLong(&Config.Timeout, "timeout", 'T', "connection timeout")
-	getopt.FlagLong(&Config.Deadline, "deadline", 't', "timeout for the session")
+	getopt.FlagLong(&Config.Timeout, "timeout", 'T', "connection timeout in seconds")
+	getopt.FlagLong(&Config.Deadline, "deadline", 't', "timeout for the session in seconds")
 
 	getopt.FlagLong(&Config.Parallelism, "parallel", 'p', "max number of parallel threads")
 
@@ -112,6 +118,7 @@ func init() {
 
 	getopt.FlagLong(&Config.DefaultUser, "default-user", 0, "default user if user id of the remote server")
 
+	getopt.FlagLong(&Config.AskPassword, "password", 0, "password for the user")
 }
 
 func TritonClientConfig(config *TsshConfig) *triton.ClientConfig {
@@ -168,7 +175,7 @@ func SplitArgs(args []string) (string, string) {
 }
 
 func StdinFile() (*os.File, error) {
-	if !IsPipe(os.Stdin) {
+	if terminal.IsTerminal(int(syscall.Stdin)) {
 		return nil, nil
 	}
 
@@ -176,28 +183,54 @@ func StdinFile() (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot create tmp file: %s\n", err)
 	}
-	defer func() { os.Remove(input.Name()) }()
-	fmt.Printf("TMP FILE: %s\n", input.Name())
+
 	nwritten, err := io.Copy(input, os.Stdin)
 	if err != nil {
 		return nil, fmt.Errorf("cannot copy STDIN to tmp file(%s): %s\n", input.Name(), err)
 	}
 
-	Debug.Printf("read %d bytes from STDIN stored to \n", nwritten, input.Name())
+	Debug.Printf("read %d bytes from STDIN stored to %s\n", nwritten, input.Name())
 	return input, nil
+}
+
+func PasswordAuth() ssh.AuthMethod {
+	Config.AskOnce.Do(func() {
+		if !Config.AskPassword {
+			return
+		}
+
+		if !terminal.IsTerminal(int(syscall.Stdin)) {
+			Err(1, nil, "stdin is not a terminal, required by password authentication")
+		}
+
+		fmt.Fprintf(os.Stderr, "password: ")
+		password, err := terminal.ReadPassword(int(syscall.Stdin))
+		fmt.Fprintf(os.Stderr, "\n")
+		if err != nil {
+			Err(1, err, "cannot read password")
+		}
+		Config.PasswordAuth = ssh.Password(string(password))
+	})
+	return Config.PasswordAuth
 }
 
 func AuthMethods() []ssh.AuthMethod {
 	return []ssh.AuthMethod{
 		AgentAuth(),
+		PasswordAuth(),
 		PublicKeyAuth("/Users/seong-kookshin/.ssh/id_rsa"),
 	}
 }
 
 func BuildJob(stdin *os.File, instance *compute.Instance, command string, bastionAddress string, bastionUser string) (*SshJob, error) {
-	imgFuture := ImageSession.Query(instance.Image)
-	img, _ := imgFuture.Get()
-	user := DefaultUser(img)
+
+	user := Config.User
+	if user == "" {
+		imgFuture := ImageSession.Query(instance.Image)
+		img, _ := imgFuture.Get()
+		user = DefaultUser(img)
+	}
+
 	public := NetworkSession.HasPublic(instance)
 
 	job := SshJob{}
@@ -205,7 +238,7 @@ func BuildJob(stdin *os.File, instance *compute.Instance, command string, bastio
 	job.ServerConfig = &ssh.ClientConfig{
 		User:            user,
 		Auth:            AuthMethods(),
-		Timeout:         Config.Timeout,
+		Timeout:         time.Duration(Config.Timeout) * time.Second,
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
 	}
 	job.Server = fmt.Sprintf("%s:%d", instance.PrimaryIP, Config.ServerPort)
@@ -214,7 +247,7 @@ func BuildJob(stdin *os.File, instance *compute.Instance, command string, bastio
 		job.BastionConfig = &ssh.ClientConfig{
 			User:            bastionUser,
 			Auth:            []ssh.AuthMethod{AgentAuth()},
-			Timeout:         Config.Timeout,
+			Timeout:         time.Duration(Config.Timeout) * time.Second,
 			HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
 		}
 		job.Bastion = fmt.Sprintf("%s:%d", bastionAddress, Config.BastionPort)
@@ -246,6 +279,7 @@ func main() {
 	args := getopt.Args()
 
 	Debug.Printf("ARGS: %v", args)
+	Debug.Printf("AskPassword: %v", Config.AskPassword)
 
 	if Config.TritonURL == "" {
 		Err(1, nil, "missing Triton endpoint. SDC_URL undefined")

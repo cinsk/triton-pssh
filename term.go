@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"syscall"
 	"unsafe"
 )
@@ -24,4 +25,16 @@ func TerminalSize() (int, int) {
 	} else {
 		return int(ws.Col), int(ws.Row)
 	}
+}
+
+func IsPipe(file *os.File) bool {
+	fi, err := file.Stat()
+	if err != nil {
+		Err(1, err, "cannot Stat() %s: %s", file.Name(), err)
+	}
+
+	if fi.Mode()&os.ModeCharDevice == 0 {
+		return true
+	}
+	return false
 }

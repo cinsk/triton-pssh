@@ -16,9 +16,6 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
-const DEADLINE = 3
-const TIMEOUT = 1
-
 type SshJob struct {
 	ServerConfig  *ssh.ClientConfig
 	BastionConfig *ssh.ClientConfig
@@ -330,13 +327,20 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 }
 
 func sshClient(endpoint string, config *ssh.ClientConfig) (*ssh.Client, error) {
-	dialer := net.Dialer{Timeout: config.Timeout, Deadline: time.Now().Add(Config.Deadline)}
+	// dialer := net.Dialer{Timeout: config.Timeout, Deadline: time.Now().Add(Config.Deadline)}
+	dialer := net.Dialer{Timeout: config.Timeout}
+	if Config.Deadline > 0 {
+		dialer.Deadline = time.Now().Add(time.Duration(Config.Deadline) * time.Second)
+	}
+
 	conn, err := dialer.Dial("tcp", endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("error: Dial() failed: %s", err)
 	}
 
-	conn.SetDeadline(time.Now().Add(time.Duration(DEADLINE) * time.Second))
+	if Config.Deadline > 0 {
+		conn.SetDeadline(time.Now().Add(time.Duration(Config.Deadline) * time.Second))
+	}
 
 	c, chans, reqs, err := ssh.NewClientConn(conn, endpoint, config)
 	if err != nil {
@@ -527,7 +531,6 @@ func ssh_main() {
 			os.Exit(1)
 		}
 		defer func() { os.Remove(input.Name()) }()
-		fmt.Printf("TMP FILE: %s\n", input.Name())
 		nwritten, err := io.Copy(input, os.Stdin)
 		if err != nil {
 			fmt.Printf("cannot copy STDIN to tmp file(%s): %s\n", input.Name(), err)
