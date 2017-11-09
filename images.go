@@ -238,6 +238,9 @@ func saveImageToFile(id string, info *compute.Image) error {
 func loadImageFromFile(id string) (*compute.Image, error) {
 	file := imageinfo_pathname(id)
 
+	if Config.NoCache {
+		return nil, fmt.Errorf("Config.NoCache is true")
+	}
 	_, err := os.Stat(file)
 	if err != nil {
 		return nil, fmt.Errorf("no cached found for %s", id)

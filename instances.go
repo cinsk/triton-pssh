@@ -13,12 +13,18 @@ import (
 	"github.com/joyent/triton-go/compute"
 )
 
+const MAX_LIMIT = 1000 // max instances that can be queried at a time
+
 func instances_pathname(input *compute.ListInstancesInput) string {
 	return filepath.Join(TsshRoot, "cache", TritonProfileName, "instances", fmt.Sprintf("%04d-%06d", input.Limit, input.Offset))
 }
 
 func loadInstancesFromFile(input *compute.ListInstancesInput) ([]*compute.Instance, error) {
 	file := instances_pathname(input)
+
+	if Config.NoCache {
+		return nil, fmt.Errorf("Config.NoCache is true")
+	}
 
 	_, err := os.Stat(file)
 	if err != nil {

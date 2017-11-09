@@ -237,6 +237,10 @@ func saveNetworkToFile(id string, info *network.Network) error {
 func loadNetworkFromFile(id string) (*network.Network, error) {
 	file := imageinfo_pathname(id)
 
+	if Config.NoCache {
+		return nil, fmt.Errorf("Config.NoCache is true")
+	}
+
 	_, err := os.Stat(file)
 	if err != nil {
 		return nil, fmt.Errorf("no cached found for %s", id)

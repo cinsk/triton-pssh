@@ -71,7 +71,7 @@ With `-i` option, you can easily see the output of the command in multiple hosts
 
 Of course, by using `-e ERRDIR`, you can save standard error output of the command, too.
 
-Another feature of `triton-pssh` is, it can send its standard input to all Triton machine instances.  You can use this feature to execute very large script, or transfer a file from your local machine to multiple Triton machine instances.
+Another feature of `triton-pssh` is, it can send its standard input to all Triton machine instances. You can use this feature to execute very large script, or transfer a file from your local machine to multiple Triton machine instances.
 
         $ # Executing large-bash-script.sh in multiple machines
         $ cat large-bash-script.sh | triton-pssh 'name == "bastion" || name == "gong"' ::: bash -s
@@ -147,4 +147,22 @@ TODO: complete the documentation
         $ triton-pssh -i 'package == "g4-highcpu-1G" && !contains(tags, "sdc_docker", true)' ::: uptime
 
     
+
+## Authentication
+
+`triton-pssh` will use the ssh-agent if the environment variable `SSH_AUTH_SOCK` exists.  Also, it will read your private key for the PublicKey authentication if `$HOME/.ssh/id_rsa` exists.
+
+Use `-i KEYFILE` to provide additional private key file for public key authentication.
+
+USe `--password` to use password authentication.  However, you cannot provide extra input through a pipe to `triton-pssh` in this case.
+
+`triton-pssh` will automatically determine the user of the remote host by looking at the Triton image of the instance.  If `triton-pssh` cannot determine the user name from Triton image API, it will use *root* by default.  You can override the default user name via `--default-user=USER` option.  Note that this value only works if querying to Triton image API failed.
+To override the user for the connection to all instannces, use `-u` option.
+
+
+## File Cache
+
+By default, `triton-pssh` will cache all information acquired from [Triton Cloud API](https://apidocs.joyent.com/cloudapi/) for certain period.  The location of the cache is `$HOME/.tssh/cache`.   If you do not want to use cached information, add `--no-cache` option.  Note that even if with `--no-cache` the information will be still cached for the later use.
+
+
 

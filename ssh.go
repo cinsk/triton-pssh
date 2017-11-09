@@ -90,25 +90,6 @@ func (s *SshSession) worker(wid int) {
 	Debug.Printf("SshWorker[%d] finished", wid)
 }
 
-func CheckOutputDirectory(dir string) error {
-	stat, err := os.Stat(dir)
-
-	if err == nil {
-		if !stat.IsDir() {
-			return fmt.Errorf("%s is not a directory", dir)
-		}
-	} else {
-		if os.IsNotExist(err) {
-			if e := os.MkdirAll(dir, 0755); e != nil {
-				return fmt.Errorf("cannot create a directory(%s): %s", dir, e)
-			}
-		} else {
-			return fmt.Errorf("os.Stat(%s) failed: %s", dir, err)
-		}
-	}
-	return nil
-}
-
 func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 	var client *ssh.Client
 	var err error
@@ -259,12 +240,6 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 		}
 
 		if Config.OutDirectory != "" {
-			if err := CheckOutputDirectory(Config.OutDirectory); err != nil {
-				return SshResult{Status: err,
-					Time:   time.Now(),
-					Server: job.Server, InstanceID: job.InstanceID, InstanceName: job.InstanceName, User: job.ServerConfig.User}
-			}
-
 			outname := filepath.Join(Config.OutDirectory, fmt.Sprintf("%s@%s", job.ServerConfig.User, job.InstanceID))
 			out, err := os.Create(outname)
 			if err != nil {
@@ -287,12 +262,6 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 		}
 
 		if Config.ErrDirectory != "" {
-			if err := CheckOutputDirectory(Config.ErrDirectory); err != nil {
-				return SshResult{Status: err,
-					Time:   time.Now(),
-					Server: job.Server, InstanceID: job.InstanceID, InstanceName: job.InstanceName, User: job.ServerConfig.User}
-			}
-
 			outname := filepath.Join(Config.ErrDirectory, fmt.Sprintf("%s@%s", job.ServerConfig.User, job.InstanceID))
 			out, err := os.Create(outname)
 			if err != nil {
@@ -364,24 +333,36 @@ func AgentAuth() ssh.AuthMethod {
 	if sshAgent, err := net.Dial("unix", authfile); err == nil {
 		return ssh.PublicKeysCallback(agent.NewClient(sshAgent).Signers)
 	} else {
-		Warn.Printf("fail to create agent client: %s", err)
+		Warn.Printf("warning: fail to create agent client: %s", err)
 		return nil
 	}
 }
 
-func PublicKeyAuth(publicKeyFile string) ssh.AuthMethod {
+func PublicKeyAuth(publicKeyFile string) (ssh.AuthMethod, error) {
+	stat, err := os.Stat(publicKeyFile)
+	if err == nil {
+		bits := stat.Mode().Perm() & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)
+		if int(bits) != 0 {
+			return nil, fmt.Errorf("wrong permission for the key file: %s", publicKeyFile)
+		}
+	} else {
+		if os.IsNotExist(err) {
+			return nil, nil
+		} else {
+			return nil, err
+		}
+	}
+
 	buffer, err := ioutil.ReadFile(publicKeyFile)
 	if err != nil {
-		Warn.Printf("cannot read key file(%s): %s", publicKeyFile, err)
-		return nil
+		return nil, fmt.Errorf("cannot read key file(%s): %s", publicKeyFile, err)
 	}
 
 	key, err := ssh.ParsePrivateKey(buffer)
 	if err != nil {
-		Warn.Printf("cannot parse key file from %s: %s", publicKeyFile, err)
-		return nil
+		return nil, fmt.Errorf("cannot parse key file from %s: %s", publicKeyFile, err)
 	}
-	return ssh.PublicKeys(key)
+	return ssh.PublicKeys(key), nil
 }
 
 const BASTION = "165.225.136.229:22"
@@ -403,9 +384,9 @@ func tmp_main() {
 	sshConfig := &ssh.ClientConfig{
 		User: "root",
 		Auth: []ssh.AuthMethod{
-			// ssh.Password("2bnot2b"),
-			// AgentAuth(),
-			PublicKeyAuth("/Users/seong-kookshin/.ssh/id_rsa"),
+		// ssh.Password("2bnot2b"),
+		// AgentAuth(),
+		//PublicKeyAuth("/Users/seong-kookshin/.ssh/id_rsa"),
 		},
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
 	}
@@ -546,8 +527,8 @@ func ssh_main() {
 		var job SshJob
 
 		job.ServerConfig = &ssh.ClientConfig{
-			User:            "root",
-			Auth:            []ssh.AuthMethod{PublicKeyAuth("/Users/seong-kookshin/.ssh/id_rsa")},
+			User: "root",
+			//Auth:            []ssh.AuthMethod{PublicKeyAuth("/Users/seong-kookshin/.ssh/id_rsa")},
 			HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil }}
 
 		job.Server = s

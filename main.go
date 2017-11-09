@@ -8,6 +8,8 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,14 +20,11 @@ import (
 	"github.com/joyent/triton-go/compute"
 	"github.com/joyent/triton-go/network"
 	"github.com/logrusorgru/aurora"
-	"github.com/pborman/getopt/v2"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
 var instanceChannel = make(chan compute.Instance, 1)
-
-const MAX_LIMIT = 1000
 
 func getBastion(client *compute.ComputeClient, context context.Context, name string) (string, string, error) {
 	instances, err := client.Instances().List(context, &compute.ListInstancesInput{Name: name})
@@ -59,8 +58,8 @@ type TsshConfig struct {
 	BastionName string // Triton instance name
 	BastionPort int
 
-	Deadline int // time.Duration
-	Timeout  int // time.Duration
+	Deadline time.Duration // time.Duration
+	Timeout  time.Duration // time.Duration
 
 	InlineOutput bool
 	OutDirectory string
@@ -70,8 +69,12 @@ type TsshConfig struct {
 	DefaultUser string
 
 	AskPassword  bool
-	AskOnce      sync.Once
-	PasswordAuth ssh.AuthMethod
+	askOnce      sync.Once
+	passwordAuth ssh.AuthMethod
+
+	KeyFiles []string
+
+	NoCache bool
 }
 
 var Config TsshConfig = TsshConfig{
@@ -88,6 +91,41 @@ var Config TsshConfig = TsshConfig{
 
 	Parallelism: 32,
 	DefaultUser: "root",
+
+	KeyFiles: make([]string, 0),
+}
+
+const (
+	OPTION_HELP = iota
+	OPTION_VERSION
+	OPTION_URL
+	OPTION_BASTION_PORT
+	OPTION_DEFAULT_USER
+	OPTION_PASSWORD
+	OPTION_NOCACHE
+)
+
+var Options = []OptionSpec{
+	{OPTION_HELP, "help", NO_ARGUMENT},
+	{OPTION_VERSION, "version", NO_ARGUMENT},
+	{'k', "keyid", ARGUMENT_REQUIRED},
+	// {'K', "keyfile", ARGUMENT_REQUIRED},
+	{OPTION_URL, "url", ARGUMENT_REQUIRED},
+	{'u', "user", ARGUMENT_REQUIRED},
+	{'P', "port", ARGUMENT_REQUIRED},
+	{'U', "bastion-user", ARGUMENT_REQUIRED},
+	{'b', "bastion", ARGUMENT_REQUIRED},
+	{OPTION_BASTION_PORT, "bastion-port", ARGUMENT_REQUIRED},
+	{'T', "timeout", ARGUMENT_REQUIRED},
+	{'t', "deadline", ARGUMENT_REQUIRED},
+	{'p', "parallel", ARGUMENT_REQUIRED},
+	{'i', "inline", NO_ARGUMENT},
+	{'o', "outdir", ARGUMENT_REQUIRED},
+	{'e', "errdir", ARGUMENT_REQUIRED},
+	{OPTION_DEFAULT_USER, "default-user", ARGUMENT_REQUIRED},
+	{OPTION_PASSWORD, "password", NO_ARGUMENT},
+	{'I', "identity", ARGUMENT_REQUIRED},
+	{OPTION_NOCACHE, "no-cache", NO_ARGUMENT},
 }
 
 func init() {
@@ -96,29 +134,107 @@ func init() {
 	Config.KeyPath = os.Getenv("SDC_KEY_FILE")
 	Config.TritonURL = os.Getenv("SDC_URL")
 
-	getopt.FlagLong(&Config.KeyId, "keyid", 'k', "Triton account Key ID")
-	getopt.FlagLong(&Config.KeyPath, "keyfile", 'K', "Triton Key file path")
-	getopt.FlagLong(&Config.TritonURL, "url", 0, "Triton DC endpoint")
+}
 
-	getopt.FlagLong(&Config.User, "user", 'u', "user id of the remote server")
-	getopt.FlagLong(&Config.ServerPort, "port", 'P', "server(s) port")
+func HelpAndExit() {
+	msg := `triton-pssh usage`
+	fmt.Printf(msg)
+	os.Exit(0)
+}
 
-	getopt.FlagLong(&Config.BastionUser, "bastion-user", 'U', "user id of the bastion server")
-	getopt.FlagLong(&Config.BastionName, "bastion", 'b', "bastion server address")
-	getopt.FlagLong(&Config.BastionPort, "bastion-port", 0, "bastion server port")
+func VersionAndExit() {
+	fmt.Printf("%s version %s", ProgramName, VERSION_STRING)
+	os.Exit(0)
+}
 
-	getopt.FlagLong(&Config.Timeout, "timeout", 'T', "connection timeout in seconds")
-	getopt.FlagLong(&Config.Deadline, "deadline", 't', "timeout for the session in seconds")
+func ParseOptions(args []string) []string {
+	context := GetoptContext{}
+	for {
+		opt, err := Getopt(&context, Options)
 
-	getopt.FlagLong(&Config.Parallelism, "parallel", 'p', "max number of parallel threads")
+		if err != nil {
+			Err(1, err, "Getopt() failed")
+		}
+		if opt == nil {
+			break
+		}
+		switch opt.LongOption {
+		case "help":
+			HelpAndExit()
+		case "version":
+			VersionAndExit()
+		case "keyid":
+			Config.KeyId = opt.Argument
+		case "identity":
+			Config.KeyFiles = append(Config.KeyFiles, opt.Argument)
+		case "user":
+			Config.User = opt.Argument
+		case "port":
+			i, err := strconv.Atoi(opt.Argument)
+			if err != nil {
+				Config.ServerPort = i
+			} else {
+				Err(1, err, "cannot convert %s to numberic value", opt.Argument)
+			}
+		case "bastion-user":
+			Config.BastionUser = opt.Argument
+		case "bastion":
+			Config.BastionName = opt.Argument
+		case "timeout":
+			f, err := strconv.ParseFloat(opt.Argument, 0)
+			if err != nil {
+				Err(1, err, "cannot convert %s to numberic value", opt.Argument)
+			}
+			Config.Timeout = time.Duration(f * float64(time.Second))
+		case "deadline":
+			f, err := strconv.ParseFloat(opt.Argument, 0)
+			if err != nil {
+				Err(1, err, "cannot convert %s to numberic value", opt.Argument)
+			}
+			Config.Deadline = time.Duration(f * float64(time.Second))
+		case "parallel":
+			i, err := strconv.Atoi(opt.Argument)
+			if err != nil {
+				if i <= 0 {
+					i = 1
+				}
+				Config.Parallelism = i
+			} else {
+				Err(1, err, "cannot convert %s to numberic value", opt.Argument)
+			}
+		case "inline":
+			Config.InlineOutput = true
+		case "outdir":
+			if err := CheckOutputDirectory(opt.Argument, true); err != nil {
+				Err(1, err, "invalid argument")
+			}
+			Config.OutDirectory = opt.Argument
+		case "errdir":
+			if err := CheckOutputDirectory(opt.Argument, true); err != nil {
+				Err(1, err, "invalid argument")
+			}
+			Config.ErrDirectory = opt.Argument
+		case "default-user":
+			Config.DefaultUser = opt.Argument
+		case "password":
+			Config.AskPassword = true
+		case "no-cache":
+			Config.NoCache = true
+		default:
+			Err(1, err, "unrecognized option -- %s", opt.LongOption)
+		}
+	}
 
-	getopt.FlagLong(&Config.InlineOutput, "inline", 'i', "inline standard output for each server")
-	getopt.FlagLong(&Config.OutDirectory, "outdir", 'o', "output directory for stdout files")
-	getopt.FlagLong(&Config.ErrDirectory, "errdir", 'e', "output directory for stderr files")
+	Config.KeyFiles = append(Config.KeyFiles, filepath.Join(HomeDirectory, ".ssh", "id_rsa"))
+	Config.KeyFiles = append(Config.KeyFiles, filepath.Join(HomeDirectory, ".ssh", "id_dsa"))
+	Config.KeyFiles = append(Config.KeyFiles, filepath.Join(HomeDirectory, ".ssh", "id_ecdsa"))
+	Config.KeyFiles = append(Config.KeyFiles, filepath.Join(HomeDirectory, ".ssh", "id_ed25519"))
 
-	getopt.FlagLong(&Config.DefaultUser, "default-user", 0, "default user if user id of the remote server")
+	if Config.InlineOutput && (Config.OutDirectory != "" || Config.ErrDirectory != "") {
+		Err(1, nil, "inline output(-i,--inline) cannot be used with (-o,--outdir,-e,--errdir)")
+	}
 
-	getopt.FlagLong(&Config.AskPassword, "password", 0, "password for the user")
+	return context.Arguments()
 }
 
 func TritonClientConfig(config *TsshConfig) *triton.ClientConfig {
@@ -194,7 +310,7 @@ func StdinFile() (*os.File, error) {
 }
 
 func PasswordAuth() ssh.AuthMethod {
-	Config.AskOnce.Do(func() {
+	Config.askOnce.Do(func() {
 		if !Config.AskPassword {
 			return
 		}
@@ -209,17 +325,35 @@ func PasswordAuth() ssh.AuthMethod {
 		if err != nil {
 			Err(1, err, "cannot read password")
 		}
-		Config.PasswordAuth = ssh.Password(string(password))
+		Config.passwordAuth = ssh.Password(string(password))
 	})
-	return Config.PasswordAuth
+	return Config.passwordAuth
 }
 
 func AuthMethods() []ssh.AuthMethod {
-	return []ssh.AuthMethod{
-		AgentAuth(),
-		PasswordAuth(),
-		PublicKeyAuth("/Users/seong-kookshin/.ssh/id_rsa"),
+	methods := make([]ssh.AuthMethod, 0)
+
+	if auth := AgentAuth(); auth != nil {
+		methods = append(methods, auth)
 	}
+	if auth := PasswordAuth(); auth != nil {
+		methods = append(methods, auth)
+	}
+
+	for _, kfile := range Config.KeyFiles {
+		auth, err := PublicKeyAuth(kfile)
+
+		if err != nil {
+			Warn.Printf("warning: %s", kfile, err)
+		}
+
+		// auth can be nil, which should be ignored.
+		if auth != nil {
+			methods = append(methods, auth)
+		}
+	}
+
+	return methods
 }
 
 func BuildJob(stdin *os.File, instance *compute.Instance, command string, bastionAddress string, bastionUser string) (*SshJob, error) {
@@ -275,9 +409,10 @@ var NetworkSession *NetworkDBSession
 
 func main() {
 	Debug.Printf("Os.Args: %v\n", os.Args)
-	getopt.Parse()
-	args := getopt.Args()
 
+	args := ParseOptions(os.Args[1:])
+
+	Debug.Printf("Config.Keyfiles: %v\n", Config.KeyFiles)
 	Debug.Printf("ARGS: %v", args)
 	Debug.Printf("AskPassword: %v", Config.AskPassword)
 
@@ -329,7 +464,7 @@ func main() {
 	for instance := range instanceChan {
 		result, error := Evaluate(instance, expr)
 		if error != nil {
-			Warn.Printf("expr evaluation failed: %s", error)
+			Warn.Printf("warning: expr evaluation failed: %s", error)
 			continue
 		}
 		if r := bool(result); !r {
@@ -342,7 +477,7 @@ func main() {
 
 		job, err := BuildJob(inputFile, instance, cmdline, bastionAddress, bastionUser)
 		if err != nil {
-			Warn.Printf("cannot create SSH job: %s", err)
+			Warn.Printf("warning: cannot create SSH job: %s", err)
 			continue
 		}
 
