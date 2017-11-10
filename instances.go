@@ -96,9 +96,9 @@ func ListInstances(client *compute.ComputeClient, context context.Context) chan 
 			}
 
 			for _, inst := range instances {
-				ImageSession.Query(inst.Image)
+				ImgCache.Prepare(inst.Image)
 				for _, netid := range inst.Networks {
-					NetworkSession.Query(netid)
+					NetCache.Prepare(netid)
 				}
 				wg.Add(1)
 				go func(i *compute.Instance) {

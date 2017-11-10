@@ -5,7 +5,62 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sync"
+	"time"
+
+	"golang.org/x/crypto/ssh"
 )
+
+type TsshConfig struct {
+	KeyId       string
+	KeyPath     string
+	AccountName string
+
+	TritonURL string
+
+	User       string
+	ServerPort int
+
+	BastionUser string
+	BastionName string // Triton instance name
+	BastionPort int
+
+	Deadline time.Duration // time.Duration
+	Timeout  time.Duration // time.Duration
+
+	InlineOutput bool
+	OutDirectory string
+	ErrDirectory string
+	Parallelism  int
+
+	DefaultUser string
+
+	AskPassword  bool
+	askOnce      sync.Once
+	passwordAuth ssh.AuthMethod
+
+	KeyFiles []string
+
+	NoCache bool
+}
+
+var Config TsshConfig = TsshConfig{
+	BastionUser: "root",
+	BastionPort: 22,
+	BastionName: "bastion",
+
+	ServerPort: 22,
+
+	InlineOutput: false,
+
+	Timeout:  time.Duration(10) * time.Second,
+	Deadline: time.Duration(20) * time.Second,
+
+	Parallelism: 32,
+	DefaultUser: "root",
+
+	KeyFiles: make([]string, 0),
+}
 
 var HomeDirectory string
 var TsshRoot string

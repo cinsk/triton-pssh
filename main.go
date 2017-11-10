@@ -36,63 +36,11 @@ func getBastion(client *compute.ComputeClient, context context.Context, name str
 	} else {
 		// ip, user, error
 
-		f := ImageSession.Query(instances[0].Image)
-		img, _ := f.Get()
+		img, _ := ImgCache.Get(instances[0].Image)
 		user := DefaultUser(img)
 
 		return instances[0].PrimaryIP, user, nil
 	}
-}
-
-type TsshConfig struct {
-	KeyId       string
-	KeyPath     string
-	AccountName string
-
-	TritonURL string
-
-	User       string
-	ServerPort int
-
-	BastionUser string
-	BastionName string // Triton instance name
-	BastionPort int
-
-	Deadline time.Duration // time.Duration
-	Timeout  time.Duration // time.Duration
-
-	InlineOutput bool
-	OutDirectory string
-	ErrDirectory string
-	Parallelism  int
-
-	DefaultUser string
-
-	AskPassword  bool
-	askOnce      sync.Once
-	passwordAuth ssh.AuthMethod
-
-	KeyFiles []string
-
-	NoCache bool
-}
-
-var Config TsshConfig = TsshConfig{
-	BastionUser: "root",
-	BastionPort: 22,
-	BastionName: "bastion",
-
-	ServerPort: 22,
-
-	InlineOutput: false,
-
-	Timeout:  5,
-	Deadline: 20,
-
-	Parallelism: 32,
-	DefaultUser: "root",
-
-	KeyFiles: make([]string, 0),
 }
 
 const (
@@ -148,9 +96,9 @@ func VersionAndExit() {
 }
 
 func ParseOptions(args []string) []string {
-	context := GetoptContext{}
+	context := GetoptContext{Options: Options, Args: args}
 	for {
-		opt, err := Getopt(&context, Options)
+		opt, err := context.Getopt()
 
 		if err != nil {
 			Err(1, err, "Getopt() failed")
@@ -174,7 +122,7 @@ func ParseOptions(args []string) []string {
 			if err != nil {
 				Config.ServerPort = i
 			} else {
-				Err(1, err, "cannot convert %s to numberic value", opt.Argument)
+				Err(1, err, "cannot convert %s to numeric value", opt.Argument)
 			}
 		case "bastion-user":
 			Config.BastionUser = opt.Argument
@@ -183,9 +131,11 @@ func ParseOptions(args []string) []string {
 		case "timeout":
 			f, err := strconv.ParseFloat(opt.Argument, 0)
 			if err != nil {
-				Err(1, err, "cannot convert %s to numberic value", opt.Argument)
+				Err(1, err, "cannot convert %s to numeric value", opt.Argument)
 			}
 			Config.Timeout = time.Duration(f * float64(time.Second))
+			Debug.Printf("TIMEOUT: %v\n", Config.Timeout)
+
 		case "deadline":
 			f, err := strconv.ParseFloat(opt.Argument, 0)
 			if err != nil {
@@ -194,13 +144,13 @@ func ParseOptions(args []string) []string {
 			Config.Deadline = time.Duration(f * float64(time.Second))
 		case "parallel":
 			i, err := strconv.Atoi(opt.Argument)
-			if err != nil {
+			if err == nil {
 				if i <= 0 {
 					i = 1
 				}
 				Config.Parallelism = i
 			} else {
-				Err(1, err, "cannot convert %s to numberic value", opt.Argument)
+				Err(1, err, "cannot convert %s to numeric value", opt.Argument)
 			}
 		case "inline":
 			Config.InlineOutput = true
@@ -360,19 +310,18 @@ func BuildJob(stdin *os.File, instance *compute.Instance, command string, bastio
 
 	user := Config.User
 	if user == "" {
-		imgFuture := ImageSession.Query(instance.Image)
-		img, _ := imgFuture.Get()
+		img, _ := ImgCache.Get(instance.Image)
 		user = DefaultUser(img)
 	}
 
-	public := NetworkSession.HasPublic(instance)
+	public := NetCache.HasPublic(instance)
 
 	job := SshJob{}
 
 	job.ServerConfig = &ssh.ClientConfig{
 		User:            user,
 		Auth:            AuthMethods(),
-		Timeout:         time.Duration(Config.Timeout) * time.Second,
+		Timeout:         Config.Timeout,
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
 	}
 	job.Server = fmt.Sprintf("%s:%d", instance.PrimaryIP, Config.ServerPort)
@@ -381,7 +330,7 @@ func BuildJob(stdin *os.File, instance *compute.Instance, command string, bastio
 		job.BastionConfig = &ssh.ClientConfig{
 			User:            bastionUser,
 			Auth:            []ssh.AuthMethod{AgentAuth()},
-			Timeout:         time.Duration(Config.Timeout) * time.Second,
+			Timeout:         Config.Timeout,
 			HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
 		}
 		job.Bastion = fmt.Sprintf("%s:%d", bastionAddress, Config.BastionPort)
@@ -404,8 +353,28 @@ func BuildJob(stdin *os.File, instance *compute.Instance, command string, bastio
 	return &job, nil
 }
 
-var ImageSession *ImageDBSession
-var NetworkSession *NetworkDBSession
+func IsDockerContainer(instance *compute.Instance) bool {
+	val, ok := instance.Tags["sdc_docker"]
+	if !ok {
+		return false
+	}
+
+	switch v := val.(type) {
+	case string:
+		b, err := strconv.ParseBool(v)
+		if err == nil && b {
+			return true
+		}
+		return false
+	case bool:
+		return v
+	default:
+		return false
+	}
+}
+
+var ImgCache *ImageCache
+var NetCache *NetworkCache
 
 func main() {
 	Debug.Printf("Os.Args: %v\n", os.Args)
@@ -428,11 +397,11 @@ func main() {
 		Err(1, err, "cannot create Triton compute client")
 	}
 
-	ImageSession = NewImageSession(tritonClient.Images(), ImageQueryMaxWorkers)
+	ImgCache = NewImageCache(tritonClient.Images())
 	if nClient, err := network.NewClient(tritonConfig); err != nil {
 		Err(1, err, "cannot create Triton network client")
 	} else {
-		NetworkSession = NewNetworkSession(nClient, NetworkQueryMaxWorkers)
+		NetCache = NewNetworkCache(nClient)
 	}
 
 	expr, cmdline := SplitArgs(args)
@@ -442,7 +411,9 @@ func main() {
 	// hasPublicNet, userPublicNet := GetHasPublicNetwork(tritonConfig)
 	// hasPublicNet, userPublicNet := GetHasPublicNetwork(tritonConfig)
 	// UserFunctions["haspublic"] = userPublicNet
-	UserFunctions["ispublic"] = NetworkSession.UserFuncIsPublic
+	UserFunctions["ispublic"] = NetCache.UserFuncIsPublic
+
+	color := aurora.NewAurora(terminal.IsTerminal(int(syscall.Stderr)))
 
 	SSH := NewSshSession(Config.Parallelism)
 
@@ -462,6 +433,10 @@ func main() {
 	resultChannel := make(chan SshResult)
 
 	for instance := range instanceChan {
+		if IsDockerContainer(instance) {
+			continue
+		}
+
 		result, error := Evaluate(instance, expr)
 		if error != nil {
 			Warn.Printf("warning: expr evaluation failed: %s", error)
@@ -512,9 +487,9 @@ func main() {
 
 		if result.Status == nil {
 			fmt.Fprintf(os.Stderr, "%s %s %s %s %s@%s\n",
-				aurora.Sprintf(aurora.Cyan("[%d]").Bold(), count),
+				color.Sprintf(color.Cyan("[%d]").Bold(), count),
 				result.Time.Format("15:04:05"),
-				aurora.Green("[SUCCESS]").Bold(),
+				color.Green("[SUCCESS]").Bold(),
 				result.InstanceID, result.User, result.InstanceName)
 
 			if Config.InlineOutput && result.Stdout != nil {
@@ -529,18 +504,18 @@ func main() {
 				errmsg = fmt.Sprintf("%s, returning %d, signaled with %s", ee.Error(), ee.ExitStatus(), ee.Signal())
 			}
 			fmt.Fprintf(os.Stderr, "%s %s %s %s %s@%s %s\n",
-				aurora.Sprintf(aurora.Cyan("[%d]").Bold(), count),
+				color.Sprintf(color.Cyan("[%d]").Bold(), count),
 				result.Time.Format("15:04:05"),
-				aurora.Red("[FAILURE]").Bold(),
+				color.Red("[FAILURE]").Bold(),
 				result.InstanceID, result.User, result.InstanceName,
-				aurora.Red(errmsg).Bold())
+				color.Red(errmsg).Bold())
 		} else {
 			fmt.Fprintf(os.Stderr, "%s %s %s %s %s@%s %s\n",
-				aurora.Sprintf(aurora.Cyan("[%d]").Bold(), count),
+				color.Sprintf(color.Cyan("[%d]").Bold(), count),
 				result.Time.Format("15:04:05"),
-				aurora.Red("[FAILURE]").Bold(),
+				color.Red("[FAILURE]").Bold(),
 				result.InstanceID, result.User, result.InstanceName,
-				aurora.Sprintf(aurora.Red("%s").Bold(), result.Status))
+				color.Sprintf(color.Red("%s").Bold(), result.Status))
 		}
 
 	}

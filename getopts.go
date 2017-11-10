@@ -24,10 +24,10 @@ type Option struct {
 }
 
 type GetoptContext struct {
-	Args []string // read only copy of os.Args
-
-	done  bool
-	sopts []rune
+	Args    []string // read only copy of os.Args
+	Options []OptionSpec
+	done    bool
+	sopts   []rune
 }
 
 func (c *GetoptContext) Arguments() []string {
@@ -36,7 +36,7 @@ func (c *GetoptContext) Arguments() []string {
 
 // -ascd 4 --hello=xxx
 
-func Getopt(c *GetoptContext, options []OptionSpec) (*Option, error) {
+func (c *GetoptContext) Getopt() (*Option, error) {
 	if c.sopts == nil {
 		if c.Args == nil {
 			c.Args = os.Args[1:]
@@ -52,7 +52,7 @@ func Getopt(c *GetoptContext, options []OptionSpec) (*Option, error) {
 		opt := c.sopts[0]
 		c.sopts = c.sopts[1:]
 
-		for _, spec := range options {
+		for _, spec := range c.Options {
 			if opt == spec.Option {
 				if spec.ArgumentRequired {
 					if len(c.sopts) == 0 {
@@ -105,7 +105,7 @@ func Getopt(c *GetoptContext, options []OptionSpec) (*Option, error) {
 		}
 		c.Args = c.Args[1:]
 
-		for _, spec := range options {
+		for _, spec := range c.Options {
 			if tokens[0] == spec.LongOption {
 				if spec.ArgumentRequired {
 					if len(tokens) == 1 {
@@ -122,7 +122,7 @@ func Getopt(c *GetoptContext, options []OptionSpec) (*Option, error) {
 	} else if word[:1] == "-" { // short option
 		c.Args = c.Args[1:]
 		c.sopts = []rune(word[1:])
-		return Getopt(c, options)
+		return c.Getopt()
 	} else {
 		c.done = true
 		return nil, nil
@@ -140,9 +140,9 @@ func getopts_main() {
 		{'o', "output", true},
 	}
 
-	context := GetoptContext{}
+	context := GetoptContext{Options: options, Args: os.Args[1:]}
 	for {
-		opt, err := Getopt(&context, options)
+		opt, err := context.Getopt()
 
 		if err != nil {
 			fmt.Printf("error: %s\n", err)

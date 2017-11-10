@@ -9,204 +9,55 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"sync"
 
 	triton "github.com/joyent/triton-go"
 	"github.com/joyent/triton-go/authentication"
 	"github.com/joyent/triton-go/compute"
 )
 
-type ImageDBSession struct {
-	mutex sync.Mutex
-	db    map[string]*compute.Image
-
-	pool   *ImageWorkerPool
+type ImageCache struct {
 	client *compute.ImagesClient
+	cache  *CacheSession
 }
 
-type ImageQueryInfo struct {
-	ID       string
-	Receiver chan *ImageQueryFuture
+func NewImageCache(client *compute.ImagesClient) *ImageCache {
+	cache := ImageCache{}
+
+	cache.client = client
+	cache.cache = NewCacheSession(cache.Updater, 1, true, ImageQueryMaxWorkers)
+
+	return &cache
 }
 
-type ImageWorkerPool struct {
-	tries   map[string]int
-	working map[string]bool
-	waiting map[string]chan struct{}
+func (s *ImageCache) Get(key string) (*compute.Image, error) {
+	value, err := s.cache.Get(key)
 
-	workerInput chan *ImageQueryInfo
-
-	queryInput chan string
-
-	jobs    sync.WaitGroup
-	workers sync.WaitGroup
-}
-
-type ImageQueryFuture struct {
-	ID      string
-	Done    chan struct{}
-	Value   *compute.Image
-	Session *ImageDBSession
-	Error   error
-}
-
-func (f *ImageQueryFuture) String() string {
-	return fmt.Sprintf("{ ID: %s, Done: %v }", f.ID, f.Done)
-}
-
-func (f *ImageQueryFuture) Get() (*compute.Image, error) {
-	select {
-	case <-f.Done:
+	if err != nil {
+		return nil, err
+	} else {
+		img, _ := value.(*compute.Image)
+		return img, nil
 	}
-	f.Session.mutex.Lock()
-	defer f.Session.mutex.Unlock()
-	f.Value = f.Session.db[f.ID]
-	return f.Value, nil
 }
 
-func NewImageSession(client *compute.ImagesClient, nworkers int) *ImageDBSession {
-	s := ImageDBSession{db: make(map[string]*compute.Image), client: client,
-		pool: newImageWorkerPool(nworkers)}
+func (s *ImageCache) Close() {
+	s.cache.Close()
+}
 
-	for i := 0; i < nworkers; i++ {
-		s.pool.workers.Add(1)
-		go s.Worker(i)
+func (s *ImageCache) Prepare(key string) {
+	s.cache.Prepare(key)
+}
+
+func (s *ImageCache) Updater(key string) (interface{}, error) {
+	if img, err := loadImageFromFile(key); err == nil {
+		return img, nil
 	}
 
-	return &s
-}
-
-func newImageWorkerPool(nworkers int) *ImageWorkerPool {
-	s := ImageWorkerPool{tries: make(map[string]int), waiting: make(map[string]chan struct{}), working: make(map[string]bool), workerInput: make(chan *ImageQueryInfo)}
-
-	return &s
-}
-
-func (s *ImageDBSession) Query(id string) *ImageQueryFuture {
-	recv := make(chan *ImageQueryFuture)
-	defer close(recv)
-
-	s.pool.jobs.Add(1)
-
-	go func() { s.pool.workerInput <- &ImageQueryInfo{ID: id, Receiver: recv} }()
-
-	return <-recv
-}
-
-func (s *ImageDBSession) Worker(worker_id int) {
-	defer s.pool.workers.Done()
-	defer Debug.Printf("ImageDBSession worker[%d] finished", worker_id)
-
-	Debug.Printf("ImageDBSession worker[%d] started", worker_id)
-
-	for job := range s.pool.workerInput {
-		func() {
-			defer s.pool.jobs.Done()
-
-			getFuture := func() (*ImageQueryFuture, bool) {
-				s.mutex.Lock()
-				defer s.mutex.Unlock()
-
-				if _, ok := s.db[job.ID]; ok {
-					done := make(chan struct{})
-					close(done)
-					Debug.Printf("ImageDBSession worker[%d] creating future for %s, ALREADY EXISTED", worker_id, job.ID)
-					return &ImageQueryFuture{ID: job.ID, Done: done, Session: s}, true
-				}
-
-				if wp := s.pool.working[job.ID]; wp {
-					Debug.Printf("ImageDBSession worker[%d] creating future for %s, PENDING PROCESSING", worker_id, job.ID)
-
-					return &ImageQueryFuture{ID: job.ID, Done: s.pool.waiting[job.ID], Session: s}, true
-				} else { // there are no workers working on job.ID
-
-					if _, ok := s.pool.waiting[job.ID]; ok { // Previous worker failed on this job.ID
-						Debug.Printf("ImageDBSession worker[%d] creating future for %s, RECOVERING FAILURE", worker_id, job.ID)
-
-						return &ImageQueryFuture{ID: job.ID, Done: s.pool.waiting[job.ID], Session: s}, false
-					} else {
-						done := make(chan struct{})
-						s.pool.waiting[job.ID] = done
-						Debug.Printf("ImageDBSession worker[%d] creating future for %s, NOT FOUND", worker_id, job.ID)
-
-						return &ImageQueryFuture{ID: job.ID, Done: done, Session: s}, false
-					}
-				}
-			}
-
-			future, done := getFuture()
-			job.Receiver <- future
-			if done {
-				return
-			}
-
-			s.mutex.Lock()
-			s.pool.working[job.ID] = true
-			s.pool.tries[job.ID]++
-			s.mutex.Unlock()
-
-			if img, err := loadImageFromFile(job.ID); err == nil {
-				Debug.Printf("ImageDBSession worker[%d]: Querying Image[%s] from cache...\n", worker_id, job.ID)
-				func() {
-					s.mutex.Lock()
-					defer s.mutex.Unlock()
-					defer func() { s.pool.working[job.ID] = false }()
-
-					s.db[job.ID] = img
-					Debug.Printf("ImageDBSession worker[%d]: Closing Done for %s\n", worker_id, job.ID)
-					close(s.pool.waiting[job.ID])
-				}()
-				Debug.Printf("ImageDBSession worker[%d]: Querying Image[%s] from cache...DONE\n", worker_id, job.ID)
-				return
-			}
-			Debug.Printf("ImageDBSession Worker[%d]: Querying Image[%s] to Triton...\n", worker_id, job.ID)
-			img, err := s.client.Get(context.Background(), &compute.GetImageInput{ImageID: job.ID})
-
-			if job.ID == "08aad3e2-672d-11e7-acc4-07e9ace8a210" {
-				err = fmt.Errorf("DEBUG")
-			}
-
-			if err != nil {
-				s.mutex.Lock()
-				tries := s.pool.tries[job.ID]
-				s.pool.working[job.ID] = false
-				Debug.Printf("ImageDBSession Worker[%d]: failed querying %s, %d times", worker_id, job.ID, tries)
-
-				if tries < ImageQueryMaxTries {
-					Debug.Printf("ImageDBSession Worker[%d]: re Querying... %s", worker_id, job.ID)
-					/*
-						s.mutex.Lock()
-						delete(s.pool.waiting, job.ID)
-						s.mutex.Unlock()
-					*/
-					//s.mutex.Unlock()
-					go func(id string) { s.Query(id) }(job.ID)
-					//s.mutex.Lock()
-					Debug.Printf("ImageDBSession Worker[%d]: re Querying... done", worker_id)
-				} else {
-					Debug.Printf("ImageDBSession Worker[%d]: tried querying %d times for %s", worker_id, tries, job.ID)
-					img := &compute.Image{}
-					img.Tags = make(map[string]string)
-					img.Tags["default_user"] = Config.DefaultUser
-
-					s.db[job.ID] = img
-					Debug.Printf("ImageDBSession Worker[%d]: closing Done channel of %s\n", worker_id, job.ID)
-					close(s.pool.waiting[job.ID])
-				}
-				s.mutex.Unlock()
-
-			} else {
-				s.mutex.Lock()
-				s.db[job.ID] = img
-				s.pool.working[job.ID] = false
-
-				Debug.Printf("ImageDBSession Worker[%d]: closing Done channel of %s\n", worker_id, job.ID)
-				close(s.pool.waiting[job.ID])
-				s.mutex.Unlock()
-				saveImageToFile(job.ID, img)
-			}
-		}()
+	img, err := s.client.Get(context.Background(), &compute.GetImageInput{ImageID: key})
+	if err == nil {
+		saveImageToFile(key, img)
 	}
+	return img, err
 }
 
 func imageinfo_pathname(id string) string {
@@ -264,6 +115,10 @@ func loadImageFromFile(id string) (*compute.Image, error) {
 }
 
 func DefaultUser(image *compute.Image) string {
+	if image == nil {
+		return Config.DefaultUser
+	}
+
 	if user, ok := image.Tags["default_user"]; ok {
 		return user
 	} else {
@@ -285,29 +140,27 @@ func images_main() {
 	config := triton.ClientConfig{TritonURL: url, AccountName: accountName, Signers: []authentication.Signer{signer}}
 
 	cClient, err := compute.NewClient(&config)
-	session := NewImageSession(cClient.Images(), ImageQueryMaxWorkers)
+	session := NewImageCache(cClient.Images())
 
 	scanner := bufio.NewScanner(os.Stdin)
 
 	seen := map[string]bool{}
 	for scanner.Scan() {
 		fmt.Printf("read: %s\n", scanner.Text())
-		f := session.Query(scanner.Text())
-		fmt.Printf("Future: %s\n", f)
+		session.Prepare(scanner.Text())
 		seen[scanner.Text()] = true
 	}
 
 	for k, _ := range seen {
-		resp := session.Query(k)
-		fmt.Printf("Future: %s\n", resp)
 		fmt.Printf("calling Get() for %s\n", k)
-		img, _ := resp.Get()
+		img, _ := session.Get(k)
 		//fmt.Printf("%s[%d] = %s\n", k, session.pool.tries[k], DefaultUser(img))
 		fmt.Printf("%s = %s\n", k, DefaultUser(img))
 	}
 
 	fmt.Printf("Wait...\n")
-	session.pool.jobs.Wait()
+	session.Close()
+
 	/*
 		for k, v := range ImgSession.tries {
 			if info, ok := ImgSession.db[k]; ok {

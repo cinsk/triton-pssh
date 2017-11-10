@@ -9,7 +9,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"sync"
 
 	triton "github.com/joyent/triton-go"
 	"github.com/joyent/triton-go/authentication"
@@ -17,195 +16,49 @@ import (
 	"github.com/joyent/triton-go/network"
 )
 
-type NetworkDBSession struct {
-	mutex sync.Mutex
-	db    map[string]*network.Network
-
-	pool   *NetworkWorkerPool
+type NetworkCache struct {
 	client *network.NetworkClient
+	cache  *CacheSession
 }
 
-type NetworkQueryInfo struct {
-	ID       string
-	Receiver chan *NetworkQueryFuture
+func NewNetworkCache(client *network.NetworkClient) *NetworkCache {
+	cache := NetworkCache{}
+
+	cache.client = client
+	cache.cache = NewCacheSession(cache.Updater, 1, true, NetworkQueryMaxWorkers)
+
+	return &cache
 }
 
-type NetworkWorkerPool struct {
-	tries   map[string]int
-	working map[string]bool
-	waiting map[string]chan struct{}
+func (s *NetworkCache) Get(key string) (*network.Network, error) {
+	value, err := s.cache.Get(key)
 
-	workerInput chan *NetworkQueryInfo
-
-	queryInput chan string
-
-	jobs    sync.WaitGroup
-	workers sync.WaitGroup
-}
-
-type NetworkQueryFuture struct {
-	ID      string
-	Done    chan struct{}
-	Value   *network.Network
-	Session *NetworkDBSession
-	Error   error
-}
-
-func (f *NetworkQueryFuture) String() string {
-	return fmt.Sprintf("{ ID: %s, Done: %v }", f.ID, f.Done)
-}
-
-func (f *NetworkQueryFuture) Get() (*network.Network, error) {
-	select {
-	case <-f.Done:
+	if err != nil {
+		return nil, err
+	} else {
+		net, _ := value.(*network.Network)
+		return net, nil
 	}
-	f.Session.mutex.Lock()
-	defer f.Session.mutex.Unlock()
-	f.Value = f.Session.db[f.ID]
-	return f.Value, nil
 }
 
-func NewNetworkSession(client *network.NetworkClient, nworkers int) *NetworkDBSession {
-	s := NetworkDBSession{db: make(map[string]*network.Network), client: client,
-		pool: newNetworkWorkerPool(nworkers)}
+func (s *NetworkCache) Close() {
+	s.cache.Close()
+}
 
-	for i := 0; i < nworkers; i++ {
-		s.pool.workers.Add(1)
-		go s.Worker(i)
+func (s *NetworkCache) Prepare(key string) {
+	s.cache.Prepare(key)
+}
+
+func (s *NetworkCache) Updater(key string) (interface{}, error) {
+	if net, err := loadNetworkFromFile(key); err == nil {
+		return net, nil
 	}
 
-	return &s
-}
-
-func newNetworkWorkerPool(nworkers int) *NetworkWorkerPool {
-	s := NetworkWorkerPool{tries: make(map[string]int), waiting: make(map[string]chan struct{}), working: make(map[string]bool), workerInput: make(chan *NetworkQueryInfo)}
-
-	return &s
-}
-
-func (s *NetworkDBSession) Query(id string) *NetworkQueryFuture {
-	recv := make(chan *NetworkQueryFuture)
-	defer close(recv)
-
-	s.pool.jobs.Add(1)
-
-	go func() { s.pool.workerInput <- &NetworkQueryInfo{ID: id, Receiver: recv} }()
-
-	return <-recv
-}
-
-func (s *NetworkDBSession) Worker(worker_id int) {
-	defer s.pool.workers.Done()
-	defer Debug.Printf("NetworkDBSession worker[%d] finished", worker_id)
-
-	Debug.Printf("NetworkDBSession worker[%d] started", worker_id)
-
-	for job := range s.pool.workerInput {
-		func() {
-			defer s.pool.jobs.Done()
-
-			getFuture := func() (*NetworkQueryFuture, bool) {
-				s.mutex.Lock()
-				defer s.mutex.Unlock()
-
-				if _, ok := s.db[job.ID]; ok {
-					done := make(chan struct{})
-					close(done)
-					Debug.Printf("NetworkDBSession worker[%d] creating future for %s, ALREADY EXISTED", worker_id, job.ID)
-					return &NetworkQueryFuture{ID: job.ID, Done: done, Session: s}, true
-				}
-
-				if wp := s.pool.working[job.ID]; wp {
-					Debug.Printf("NetworkDBSession worker[%d] creating future for %s, PENDING PROCESSING", worker_id, job.ID)
-
-					return &NetworkQueryFuture{ID: job.ID, Done: s.pool.waiting[job.ID], Session: s}, true
-				} else { // there are no workers working on job.ID
-
-					if _, ok := s.pool.waiting[job.ID]; ok { // Previous worker failed on this job.ID
-						Debug.Printf("NetworkDBSession worker[%d] creating future for %s, RECOVERING FAILURE", worker_id, job.ID)
-
-						return &NetworkQueryFuture{ID: job.ID, Done: s.pool.waiting[job.ID], Session: s}, false
-					} else {
-						done := make(chan struct{})
-						s.pool.waiting[job.ID] = done
-						Debug.Printf("NetworkDBSession worker[%d] creating future for %s, NOT FOUND", worker_id, job.ID)
-
-						return &NetworkQueryFuture{ID: job.ID, Done: done, Session: s}, false
-					}
-				}
-			}
-
-			future, done := getFuture()
-			job.Receiver <- future
-			if done {
-				return
-			}
-
-			s.mutex.Lock()
-			s.pool.working[job.ID] = true
-			s.pool.tries[job.ID]++
-			s.mutex.Unlock()
-
-			if net, err := loadNetworkFromFile(job.ID); err == nil {
-				Debug.Printf("NetworkDBSession worker[%d]: Querying Network[%s] from cache...\n", worker_id, job.ID)
-				func() {
-					s.mutex.Lock()
-					defer s.mutex.Unlock()
-					defer func() { s.pool.working[job.ID] = false }()
-
-					s.db[job.ID] = net
-					Debug.Printf("NetworkDBSession worker[%d]: Closing Done for %s\n", worker_id, job.ID)
-					close(s.pool.waiting[job.ID])
-				}()
-				Debug.Printf("NetworkDBSession worker[%d]: Querying Network[%s] from cache...DONE\n", worker_id, job.ID)
-				return
-			}
-			Debug.Printf("NetworkDBSession Worker[%d]: Querying Network[%s] to Triton...\n", worker_id, job.ID)
-			net, err := s.client.Get(context.Background(), &network.GetInput{ID: job.ID})
-
-			if job.ID == "08aad3e2-672d-11e7-acc4-07e9ace8a210" {
-				err = fmt.Errorf("DEBUG")
-			}
-
-			if err != nil {
-				s.mutex.Lock()
-				tries := s.pool.tries[job.ID]
-				s.pool.working[job.ID] = false
-				Debug.Printf("NetworkDBSession Worker[%d]: failed querying %s, %d times", worker_id, job.ID, tries)
-
-				if tries < NetworkQueryMaxTries {
-					Debug.Printf("NetworkDBSession Worker[%d]: re Querying... %s", worker_id, job.ID)
-					/*
-						s.mutex.Lock()
-						delete(s.pool.waiting, job.ID)
-						s.mutex.Unlock()
-					*/
-					//s.mutex.Unlock()
-					go func(id string) { s.Query(id) }(job.ID)
-					//s.mutex.Lock()
-					Debug.Printf("NetworkDBSession Worker[%d]: re Querying... done", worker_id)
-				} else {
-					Debug.Printf("NetworkDBSession Worker[%d]: tried querying %d times for %s", worker_id, tries, job.ID)
-					net := &network.Network{}
-
-					s.db[job.ID] = net
-					Debug.Printf("NetworkDBSession Worker[%d]: closing Done channel of %s\n", worker_id, job.ID)
-					close(s.pool.waiting[job.ID])
-				}
-				s.mutex.Unlock()
-
-			} else {
-				s.mutex.Lock()
-				s.db[job.ID] = net
-				s.pool.working[job.ID] = false
-
-				Debug.Printf("NetworkDBSession Worker[%d]: closing Done channel of %s\n", worker_id, job.ID)
-				close(s.pool.waiting[job.ID])
-				s.mutex.Unlock()
-				saveNetworkToFile(job.ID, net)
-			}
-		}()
+	net, err := s.client.Get(context.Background(), &network.GetInput{ID: key})
+	if err == nil {
+		saveNetworkToFile(key, net)
 	}
+	return net, err
 }
 
 func networkinfo_pathname(id string) string {
@@ -235,7 +88,7 @@ func saveNetworkToFile(id string, info *network.Network) error {
 }
 
 func loadNetworkFromFile(id string) (*network.Network, error) {
-	file := imageinfo_pathname(id)
+	file := networkinfo_pathname(id)
 
 	if Config.NoCache {
 		return nil, fmt.Errorf("Config.NoCache is true")
@@ -265,9 +118,8 @@ func loadNetworkFromFile(id string) (*network.Network, error) {
 	return &info, nil
 }
 
-func (s *NetworkDBSession) IsPublic(id string) bool {
-	future := s.Query(id)
-	net, err := future.Get()
+func (s *NetworkCache) IsPublic(id string) bool {
+	net, err := s.Get(id)
 	if err != nil {
 		return false
 	} else {
@@ -275,7 +127,7 @@ func (s *NetworkDBSession) IsPublic(id string) bool {
 	}
 }
 
-func (s *NetworkDBSession) HasPublic(instance *compute.Instance) bool {
+func (s *NetworkCache) HasPublic(instance *compute.Instance) bool {
 	for _, id := range instance.Networks {
 		public := s.IsPublic(id)
 		if public {
@@ -285,7 +137,7 @@ func (s *NetworkDBSession) HasPublic(instance *compute.Instance) bool {
 	return false
 }
 
-func (s *NetworkDBSession) UserFuncIsPublic(args ...interface{}) (interface{}, error) {
+func (s *NetworkCache) UserFuncIsPublic(args ...interface{}) (interface{}, error) {
 	for _, nid := range args {
 		if id, ok := nid.(string); ok {
 			public := s.IsPublic(id)
@@ -313,29 +165,27 @@ func network_main() {
 	config := triton.ClientConfig{TritonURL: url, AccountName: accountName, Signers: []authentication.Signer{signer}}
 
 	client, err := network.NewClient(&config)
-	session := NewNetworkSession(client, NetworkQueryMaxWorkers)
+	session := NewNetworkCache(client)
 
 	scanner := bufio.NewScanner(os.Stdin)
 
 	seen := map[string]bool{}
 	for scanner.Scan() {
 		fmt.Printf("read: %s\n", scanner.Text())
-		f := session.Query(scanner.Text())
-		fmt.Printf("Future: %s\n", f)
+		session.Prepare(scanner.Text())
 		seen[scanner.Text()] = true
 	}
 
 	for k, _ := range seen {
-		resp := session.Query(k)
-		fmt.Printf("Future: %s\n", resp)
 		fmt.Printf("calling Get() for %s\n", k)
-		net, _ := resp.Get()
+		net, _ := session.Get(k)
 		//fmt.Printf("%s[%d] = %s\n", k, session.pool.tries[k], DefaultUser(net))
 		fmt.Printf("%s = %v\n", k, net.Public)
 	}
 
 	fmt.Printf("Wait...\n")
-	session.pool.jobs.Wait()
+	session.Close()
+
 	/*
 		for k, v := range ImgSession.tries {
 			if info, ok := ImgSession.db[k]; ok {

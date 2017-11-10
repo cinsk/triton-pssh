@@ -299,7 +299,7 @@ func sshClient(endpoint string, config *ssh.ClientConfig) (*ssh.Client, error) {
 	// dialer := net.Dialer{Timeout: config.Timeout, Deadline: time.Now().Add(Config.Deadline)}
 	dialer := net.Dialer{Timeout: config.Timeout}
 	if Config.Deadline > 0 {
-		dialer.Deadline = time.Now().Add(time.Duration(Config.Deadline) * time.Second)
+		dialer.Deadline = time.Now().Add(Config.Deadline)
 	}
 
 	conn, err := dialer.Dial("tcp", endpoint)
@@ -308,7 +308,7 @@ func sshClient(endpoint string, config *ssh.ClientConfig) (*ssh.Client, error) {
 	}
 
 	if Config.Deadline > 0 {
-		conn.SetDeadline(time.Now().Add(time.Duration(Config.Deadline) * time.Second))
+		conn.SetDeadline(time.Now().Add(Config.Deadline))
 	}
 
 	c, chans, reqs, err := ssh.NewClientConn(conn, endpoint, config)
