@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 
 	triton "github.com/joyent/triton-go"
-	"github.com/joyent/triton-go/authentication"
 	"github.com/joyent/triton-go/compute"
 	"github.com/joyent/triton-go/network"
 )
@@ -156,13 +155,13 @@ func network_main() {
 	accountName := os.Getenv("SDC_ACCOUNT")
 	keyPath := os.Getenv("SDC_KEY_FILE")
 	url := os.Getenv("SDC_URL")
-	signer, err := GetSigner(accountName, keyId, keyPath)
+	signers, err := GetSigners(accountName, keyId, keyPath)
 	if err != nil {
 		fmt.Printf("error: %s\n", err)
 		os.Exit(1)
 	}
 
-	config := triton.ClientConfig{TritonURL: url, AccountName: accountName, Signers: []authentication.Signer{signer}}
+	config := triton.ClientConfig{TritonURL: url, AccountName: accountName, Signers: signers}
 
 	client, err := network.NewClient(&config)
 	session := NewNetworkCache(client)

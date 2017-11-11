@@ -8,10 +8,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/joyent/triton-go/compute"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -55,29 +55,88 @@ type SshResult struct {
 }
 
 type SshSession struct {
-	workers sync.WaitGroup
-	input   chan *SshJob
+	config *TsshConfig
+	input  chan *SshJob
+
+	workerGroup sync.WaitGroup
+	nworkers    int
 }
 
-func NewSshSession(nworkers int) *SshSession {
-	session := SshSession{input: make(chan *SshJob)}
+func NewSshSession(config *TsshConfig, nworkers int) *SshSession {
+	session := SshSession{config: config, input: make(chan *SshJob)}
 
 	for i := 0; i < nworkers; i++ {
-		session.workers.Add(1)
+		session.workerGroup.Add(1)
+		session.nworkers++
 		go session.worker(i)
 	}
 
 	return &session
 }
 
+func (s *SshSession) BuildJob(instance *compute.Instance, command string, stdin *os.File) (*SshJob, error) {
+	user := s.config.User
+	if user == "" {
+		img, _ := ImgCache.Get(instance.Image)
+		user = DefaultUser(img)
+	}
+
+	public := NetCache.HasPublic(instance)
+
+	job := SshJob{}
+
+	job.ServerConfig = &ssh.ClientConfig{
+		User:            user,
+		Auth:            AuthMethods(),
+		Timeout:         s.config.Timeout,
+		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
+	}
+	job.Server = fmt.Sprintf("%s:%d", instance.PrimaryIP, s.config.ServerPort)
+
+	if !public {
+		if s.config.BastionAddress == "" {
+			return nil, fmt.Errorf("cannot connect to the instance(%s) without bastion server", instance.Name)
+		}
+
+		job.BastionConfig = &ssh.ClientConfig{
+			User:            s.config.BastionUser,
+			Auth:            []ssh.AuthMethod{AgentAuth()},
+			Timeout:         s.config.Timeout,
+			HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
+		}
+		job.Bastion = fmt.Sprintf("%s:%d", s.config.BastionAddress, s.config.BastionPort)
+	}
+	job.Command = command
+	job.InstanceID = instance.ID
+	job.InstanceName = instance.Name
+
+	if stdin != nil {
+		in, err := os.Open(stdin.Name())
+		if err != nil {
+			return nil, fmt.Errorf("cannot open input file %s", stdin.Name())
+		}
+		job.Input = in
+	}
+
+	result := make(chan SshResult)
+	job.Result = result
+
+	return &job, nil
+}
+
+func (s *SshSession) Run(job *SshJob) {
+	s.input <- job
+}
+
 func (s *SshSession) Close() {
 	close(s.input)
-	s.workers.Wait()
+	s.workerGroup.Wait()
 }
 
 func (s *SshSession) worker(wid int) {
 	Debug.Printf("SshWorker[%d] started...", wid)
-	defer s.workers.Done()
+	defer s.workerGroup.Done()
+	defer func() { s.nworkers-- }()
 
 	for job := range s.input {
 		result := s.doSSH(job, wid)
@@ -100,7 +159,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 
 	if job.BastionConfig != nil {
 		Debug.Printf("SshWorker[%d].doSSH: creating ssh.Client for bastion %s", wid, job.Bastion)
-		client, err = sshClient(job.Bastion, job.BastionConfig)
+		client, err = s.sshClient(job.Bastion, job.BastionConfig)
 		if err != nil {
 			return SshResult{Status: err,
 				Time:   time.Now(),
@@ -110,7 +169,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 		conn, err := client.Dial("tcp", job.Server)
 		if err != nil {
 			client.Close()
-			return SshResult{Status: fmt.Errorf("ssh.Client.Dial() failed: %s\n", err),
+			return SshResult{Status: err, // fmt.Errorf("ssh.Client.Dial() failed: %s\n", err),
 				Time:   time.Now(),
 				Server: job.Server, InstanceID: job.InstanceID, InstanceName: job.InstanceName, User: job.ServerConfig.User}
 		}
@@ -119,7 +178,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 		if err != nil {
 			conn.Close()
 			client.Close()
-			return SshResult{Status: fmt.Errorf("error: ssh.NewClientConn() failed: %s", err),
+			return SshResult{Status: err, // fmt.Errorf("error: ssh.NewClientConn() failed: %s", err),
 				Time:   time.Now(),
 				Server: job.Server, InstanceID: job.InstanceID, InstanceName: job.InstanceName, User: job.ServerConfig.User}
 		}
@@ -128,7 +187,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 	} else {
 		Debug.Printf("SshWorker[%d].doSSH: creating ssh.Client for direct connect to %s", wid, job.Server)
 
-		client, err = sshClient(job.Server, job.ServerConfig)
+		client, err = s.sshClient(job.Server, job.ServerConfig)
 		if err != nil {
 			return SshResult{Status: err,
 				Time:   time.Now(),
@@ -139,7 +198,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 
 	session, err := client.NewSession()
 	if err != nil {
-		return SshResult{Status: fmt.Errorf("ssh.Session.NewSession() failed: %s", err),
+		return SshResult{Status: err, // fmt.Errorf("ssh.Session.NewSession() failed: %s", err),
 			Time:   time.Now(),
 			Server: job.Server, InstanceID: job.InstanceID, InstanceName: job.InstanceName, User: job.ServerConfig.User}
 	}
@@ -194,7 +253,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 
 	result := SshResult{Server: job.Server, InstanceID: job.InstanceID, InstanceName: job.InstanceName, User: job.ServerConfig.User}
 
-	if Config.InlineOutput { // inline
+	if s.config.InlineOutput { // inline
 		var stdoutBuffer bytes.Buffer
 		var stderrBuffer bytes.Buffer
 
@@ -239,8 +298,8 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 			}()
 		}
 
-		if Config.OutDirectory != "" {
-			outname := filepath.Join(Config.OutDirectory, fmt.Sprintf("%s@%s", job.ServerConfig.User, job.InstanceID))
+		if s.config.OutDirectory != "" {
+			outname := filepath.Join(s.config.OutDirectory, fmt.Sprintf("%s@%s", job.ServerConfig.User, job.InstanceID))
 			out, err := os.Create(outname)
 			if err != nil {
 				return SshResult{Status: fmt.Errorf("cannot create a file %s: %s", outname, err),
@@ -261,8 +320,8 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 			}()
 		}
 
-		if Config.ErrDirectory != "" {
-			outname := filepath.Join(Config.ErrDirectory, fmt.Sprintf("%s@%s", job.ServerConfig.User, job.InstanceID))
+		if s.config.ErrDirectory != "" {
+			outname := filepath.Join(s.config.ErrDirectory, fmt.Sprintf("%s@%s", job.ServerConfig.User, job.InstanceID))
 			out, err := os.Create(outname)
 			if err != nil {
 				return SshResult{Status: fmt.Errorf("cannot create a file %s: %s", outname, err),
@@ -284,8 +343,13 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 		}
 	}
 
-	Debug.Printf("SshWorker[%d].doSSH: executing a command: %s", wid, job.Command)
-	err = session.Run(job.Command)
+	command := job.Command
+	if !s.config.InlineStdoutOnly {
+		command = fmt.Sprintf("exec 2>&1; %s", command)
+	}
+
+	Debug.Printf("SshWorker[%d].doSSH: executing a command: %s", wid, command)
+	err = session.Run(command)
 	Debug.Printf("SshWorker[%d].doSSH: command result(err): %v", wid, err)
 	result.Time = time.Now()
 	result.Status = err
@@ -295,25 +359,25 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 	return result
 }
 
-func sshClient(endpoint string, config *ssh.ClientConfig) (*ssh.Client, error) {
+func (s *SshSession) sshClient(endpoint string, config *ssh.ClientConfig) (*ssh.Client, error) {
 	// dialer := net.Dialer{Timeout: config.Timeout, Deadline: time.Now().Add(Config.Deadline)}
 	dialer := net.Dialer{Timeout: config.Timeout}
-	if Config.Deadline > 0 {
-		dialer.Deadline = time.Now().Add(Config.Deadline)
+	if s.config.Deadline > 0 {
+		dialer.Deadline = time.Now().Add(s.config.Deadline)
 	}
 
 	conn, err := dialer.Dial("tcp", endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("error: Dial() failed: %s", err)
+		return nil, err // fmt.Errorf("error: Dial() failed: %s", err)
 	}
 
-	if Config.Deadline > 0 {
-		conn.SetDeadline(time.Now().Add(Config.Deadline))
+	if s.config.Deadline > 0 {
+		conn.SetDeadline(time.Now().Add(s.config.Deadline))
 	}
 
 	c, chans, reqs, err := ssh.NewClientConn(conn, endpoint, config)
 	if err != nil {
-		return nil, fmt.Errorf("error: ssh.NewClientConn() failed: %s", err)
+		return nil, err // fmt.Errorf("error: ssh.NewClientConn() failed: %s", err)
 	}
 
 	client := ssh.NewClient(c, chans, reqs)
@@ -365,9 +429,7 @@ func PublicKeyAuth(publicKeyFile string) (ssh.AuthMethod, error) {
 	return ssh.PublicKeys(key), nil
 }
 
-const BASTION = "165.225.136.229:22"
-const KAFKA1 = "192.168.128.18:22"
-
+/*
 func tmp_main() {
 	/*
 	   1052  joyent-curl /my/machines?name=bastion -s | json
@@ -379,7 +441,7 @@ func tmp_main() {
 	   1058  ./tssh 'true'
 	   1059  ./tssh 'true' 2>/dev/null
 
-	*/
+	//
 
 	sshConfig := &ssh.ClientConfig{
 		User: "root",
@@ -585,3 +647,4 @@ func ssh_main() {
 
 	session.Close()
 }
+*/

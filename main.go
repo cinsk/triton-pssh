@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -47,7 +46,7 @@ const (
 	OPTION_HELP = iota
 	OPTION_VERSION
 	OPTION_URL
-	OPTION_BASTION_PORT
+	OPTION_INLINE_STDOUT
 	OPTION_DEFAULT_USER
 	OPTION_PASSWORD
 	OPTION_NOCACHE
@@ -57,17 +56,18 @@ var Options = []OptionSpec{
 	{OPTION_HELP, "help", NO_ARGUMENT},
 	{OPTION_VERSION, "version", NO_ARGUMENT},
 	{'k', "keyid", ARGUMENT_REQUIRED},
-	// {'K', "keyfile", ARGUMENT_REQUIRED},
+	{'K', "keyfile", ARGUMENT_REQUIRED},
 	{OPTION_URL, "url", ARGUMENT_REQUIRED},
 	{'u', "user", ARGUMENT_REQUIRED},
 	{'P', "port", ARGUMENT_REQUIRED},
-	{'U', "bastion-user", ARGUMENT_REQUIRED},
+
 	{'b', "bastion", ARGUMENT_REQUIRED},
-	{OPTION_BASTION_PORT, "bastion-port", ARGUMENT_REQUIRED},
+
 	{'T', "timeout", ARGUMENT_REQUIRED},
 	{'t', "deadline", ARGUMENT_REQUIRED},
 	{'p', "parallel", ARGUMENT_REQUIRED},
 	{'i', "inline", NO_ARGUMENT},
+	{OPTION_INLINE_STDOUT, "inline-stdout", NO_ARGUMENT},
 	{'o', "outdir", ARGUMENT_REQUIRED},
 	{'e', "errdir", ARGUMENT_REQUIRED},
 	{OPTION_DEFAULT_USER, "default-user", ARGUMENT_REQUIRED},
@@ -81,17 +81,55 @@ func init() {
 	Config.AccountName = os.Getenv("SDC_ACCOUNT")
 	Config.KeyPath = os.Getenv("SDC_KEY_FILE")
 	Config.TritonURL = os.Getenv("SDC_URL")
-
 }
 
 func HelpAndExit() {
-	msg := `triton-pssh usage`
+	msg := `Parallel SSH program for Joyent Triton instances
+Usage: triton-pssh [OPTION] FILTER-EXPRESSION... ::: COMMAND...
+
+Option:
+
+  -i, --inline             inline standard output and standard error for each server
+      --inline-stdout      inline standard output only
+
+  -o, --outdir=DIR         output directory for stdout files
+  -e, --errdir=DIR         output directory for stderr files
+
+      --no-cache           read all information directly from Triton Cloud API
+
+  -p, --password           Ask for a password
+
+      --default-user=USER  Use USER if the default user cannot be determined
+
+  -k, --keyid=ID           the fingerprint of the SSH key for Triton Cloud API
+                             access, this will override the value of SDC_KEY_ID.
+  -K, --keyfile=KEYFILE    the private key to access Triton Cloud API, the will
+                             override the value of SDC_KEY_FILE.
+      --url=URL            the base endpoint for the Triton Cloud API, this
+                             will override the value of SDC_URL.
+
+  -u, --user=USER          the username of the remote hosts
+  -P, --port=PORT          the SSH port of the remote hosts
+
+  -b, --bastion=ENDPOINT   the endpoint([user@]name[:port]) of bastion server,
+                             name must be a Triton instance name
+
+  -T, --timeout=TIMEOUT    the connection timeout of the SSH session
+  -t, --deadline=TIMEOUT   the timeout of the SSH session
+
+  -p, --parallel=MAXPROC   the max number of SSH connection at a time
+  -I, --identity=KEYFILE
+
+      --help               display this help and exit
+      --version            output version information and exit
+
+`
 	fmt.Printf(msg)
 	os.Exit(0)
 }
 
 func VersionAndExit() {
-	fmt.Printf("%s version %s", ProgramName, VERSION_STRING)
+	fmt.Printf("%s version %s\n", ProgramName, VERSION_STRING)
 	os.Exit(0)
 }
 
@@ -113,6 +151,9 @@ func ParseOptions(args []string) []string {
 			VersionAndExit()
 		case "keyid":
 			Config.KeyId = opt.Argument
+		case "keyfile":
+			Config.KeyPath = opt.Argument
+
 		case "identity":
 			Config.KeyFiles = append(Config.KeyFiles, opt.Argument)
 		case "user":
@@ -124,10 +165,15 @@ func ParseOptions(args []string) []string {
 			} else {
 				Err(1, err, "cannot convert %s to numeric value", opt.Argument)
 			}
-		case "bastion-user":
-			Config.BastionUser = opt.Argument
 		case "bastion":
-			Config.BastionName = opt.Argument
+			user, host, port, err := ParseUserHostPort(opt.Argument)
+			if err != nil {
+				Err(1, err, "cannot parse bastion endpoint")
+			}
+			Config.BastionName = host
+			Config.BastionPort = port
+			Config.BastionUser = user
+
 		case "timeout":
 			f, err := strconv.ParseFloat(opt.Argument, 0)
 			if err != nil {
@@ -154,6 +200,9 @@ func ParseOptions(args []string) []string {
 			}
 		case "inline":
 			Config.InlineOutput = true
+		case "inline-stdout":
+			Config.InlineOutput = true
+			Config.InlineStdoutOnly = true
 		case "outdir":
 			if err := CheckOutputDirectory(opt.Argument, true); err != nil {
 				Err(1, err, "invalid argument")
@@ -188,17 +237,20 @@ func ParseOptions(args []string) []string {
 }
 
 func TritonClientConfig(config *TsshConfig) *triton.ClientConfig {
-	Debug.Printf("SDC_ACCOUNT: %s", config.AccountName)
-	Debug.Printf("SDC_KEY_ID: %s", config.KeyId)
-	Debug.Printf("SDC_KEY_FILE: %s", config.KeyPath)
-	signer, err := GetSigner(config.AccountName, config.KeyId, config.KeyPath)
+	// Debug.Printf("SDC_ACCOUNT: %s", config.AccountName)
+	// Debug.Printf("SDC_KEY_ID: %s", config.KeyId)
+	// Debug.Printf("SDC_KEY_FILE: %s", config.KeyPath)
+
+	signers := []authentication.Signer{}
+
+	signers, err := GetSigners(config.AccountName, config.KeyId, config.KeyPath)
 	if err != nil {
-		Err(1, err, "error")
+		Err(1, err, "cannot get a signer for Triton Cloud API")
 	}
 
 	c := triton.ClientConfig{TritonURL: config.TritonURL, MantaURL: os.Getenv("MANTA_URL"),
 		AccountName: config.AccountName,
-		Signers:     []authentication.Signer{signer},
+		Signers:     signers,
 	}
 
 	return &c
@@ -206,7 +258,8 @@ func TritonClientConfig(config *TsshConfig) *triton.ClientConfig {
 
 func SplitArgs(args []string) (string, string) {
 	if len(args) < 2 {
-		Err(1, nil, "wrong number of argument(s)")
+		Err(0, nil, "wrong number of argument(s)")
+		Err(1, nil, "Try with --help for more")
 	}
 
 	var patbuf bytes.Buffer
@@ -234,7 +287,8 @@ func SplitArgs(args []string) (string, string) {
 	}
 
 	if c == "" {
-		Err(1, nil, "empty command")
+		Err(0, nil, "no command specified")
+		Err(1, nil, "you might miss to use ::: delimiter")
 	}
 
 	return p, c
@@ -306,53 +360,6 @@ func AuthMethods() []ssh.AuthMethod {
 	return methods
 }
 
-func BuildJob(stdin *os.File, instance *compute.Instance, command string, bastionAddress string, bastionUser string) (*SshJob, error) {
-
-	user := Config.User
-	if user == "" {
-		img, _ := ImgCache.Get(instance.Image)
-		user = DefaultUser(img)
-	}
-
-	public := NetCache.HasPublic(instance)
-
-	job := SshJob{}
-
-	job.ServerConfig = &ssh.ClientConfig{
-		User:            user,
-		Auth:            AuthMethods(),
-		Timeout:         Config.Timeout,
-		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
-	}
-	job.Server = fmt.Sprintf("%s:%d", instance.PrimaryIP, Config.ServerPort)
-
-	if !public {
-		job.BastionConfig = &ssh.ClientConfig{
-			User:            bastionUser,
-			Auth:            []ssh.AuthMethod{AgentAuth()},
-			Timeout:         Config.Timeout,
-			HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
-		}
-		job.Bastion = fmt.Sprintf("%s:%d", bastionAddress, Config.BastionPort)
-	}
-	job.Command = command
-	job.InstanceID = instance.ID
-	job.InstanceName = instance.Name
-
-	if stdin != nil {
-		in, err := os.Open(stdin.Name())
-		if err != nil {
-			return nil, fmt.Errorf("cannot open input file %s", stdin.Name())
-		}
-		job.Input = in
-	}
-
-	result := make(chan SshResult)
-	job.Result = result
-
-	return &job, nil
-}
-
 func IsDockerContainer(instance *compute.Instance) bool {
 	val, ok := instance.Tags["sdc_docker"]
 	if !ok {
@@ -378,19 +385,18 @@ var NetCache *NetworkCache
 
 func main() {
 	Debug.Printf("Os.Args: %v\n", os.Args)
-
 	args := ParseOptions(os.Args[1:])
+	Debug.Printf("Config: %v", Config)
 
-	Debug.Printf("Config.Keyfiles: %v\n", Config.KeyFiles)
-	Debug.Printf("ARGS: %v", args)
-	Debug.Printf("AskPassword: %v", Config.AskPassword)
+	expr, cmdline := SplitArgs(args)
+	Debug.Printf("Filter Expr: %s\n", expr)
+	Debug.Printf("Command: %s\n", cmdline)
 
 	if Config.TritonURL == "" {
 		Err(1, nil, "missing Triton endpoint. SDC_URL undefined")
 	}
 
 	tritonConfig := TritonClientConfig(&Config)
-	Debug.Printf("TritonConfig: %v", tritonConfig)
 
 	tritonClient, err := compute.NewClient(tritonConfig)
 	if err != nil {
@@ -404,9 +410,17 @@ func main() {
 		NetCache = NewNetworkCache(nClient)
 	}
 
-	expr, cmdline := SplitArgs(args)
-	Debug.Printf("Filter Expr: %s\n", expr)
-	Debug.Printf("Command: %s\n", cmdline)
+	if Config.BastionName != "" {
+		addr, user, err := getBastion(tritonClient, context.Background(), Config.BastionName)
+		if err != nil {
+			Err(1, err, "cannot determine bastion server")
+		}
+		Config.BastionAddress = addr
+
+		if Config.BastionUser == "" {
+			Config.BastionUser = user
+		}
+	}
 
 	// hasPublicNet, userPublicNet := GetHasPublicNetwork(tritonConfig)
 	// hasPublicNet, userPublicNet := GetHasPublicNetwork(tritonConfig)
@@ -415,13 +429,9 @@ func main() {
 
 	color := aurora.NewAurora(terminal.IsTerminal(int(syscall.Stderr)))
 
-	SSH := NewSshSession(Config.Parallelism)
+	SSH := NewSshSession(&Config, Config.Parallelism)
 
 	instanceChan := ListInstances(tritonClient, context.Background())
-
-	bastionAddress, bastionUser, _ := getBastion(tritonClient, context.Background(), Config.BastionName)
-	// useBastion := false
-	Debug.Printf("Bastion: ADDRESS=%s, USER=%s", bastionAddress, bastionUser)
 
 	inputFile, err := StdinFile()
 	if inputFile != nil {
@@ -450,30 +460,20 @@ func main() {
 		// fmt.Printf("INSTANCE[%v]: hasPublicNet(%v)\n", instance.Name, hasPublicNet(instance))
 		// fmt.Printf("# %s [%v]:\n", instance.ID, instance.Name)
 
-		job, err := BuildJob(inputFile, instance, cmdline, bastionAddress, bastionUser)
+		job, err := SSH.BuildJob(instance, cmdline, inputFile)
 		if err != nil {
 			Warn.Printf("warning: cannot create SSH job: %s", err)
 			continue
 		}
 
 		jobWg.Add(1)
-		SSH.input <- job
+		SSH.Run(job)
 
 		go func(input chan SshResult) {
 			defer jobWg.Done()
 			result := <-input
 			resultChannel <- result
 		}(job.Result)
-
-		/*
-			if NetworkSession.HasPublic(instance) {
-				fmt.Printf("%s@%s\n", user, instance.PrimaryIP)
-
-			} else {
-				fmt.Printf("%s@%s through %s\n", user, instance.PrimaryIP, bastionIp)
-				// useBastion = true
-			}
-		*/
 	}
 
 	go func() {
@@ -485,40 +485,48 @@ func main() {
 	for result := range resultChannel {
 		count++
 
-		if result.Status == nil {
-			fmt.Fprintf(os.Stderr, "%s %s %s %s %s@%s\n",
-				color.Sprintf(color.Cyan("[%d]").Bold(), count),
-				result.Time.Format("15:04:05"),
-				color.Green("[SUCCESS]").Bold(),
-				result.InstanceID, result.User, result.InstanceName)
+		header := BuildResultHeader(count, &result, color)
+		fmt.Fprintf(os.Stderr, "%s\n", header)
+		Debug.Printf("Status: [%T] %v", result.Status, result.Status)
 
-			if Config.InlineOutput && result.Stdout != nil {
-				io.Copy(os.Stdout, result.Stdout)
-				os.Stdout.Sync()
-			}
-		} else if ee, ok := result.Status.(*ssh.ExitError); ok {
-			var errmsg string
-			if ee.Signal() == "" {
-				errmsg = fmt.Sprintf("%s, returning %d", ee.Error(), ee.ExitStatus())
-			} else {
-				errmsg = fmt.Sprintf("%s, returning %d, signaled with %s", ee.Error(), ee.ExitStatus(), ee.Signal())
-			}
-			fmt.Fprintf(os.Stderr, "%s %s %s %s %s@%s %s\n",
-				color.Sprintf(color.Cyan("[%d]").Bold(), count),
-				result.Time.Format("15:04:05"),
-				color.Red("[FAILURE]").Bold(),
-				result.InstanceID, result.User, result.InstanceName,
-				color.Red(errmsg).Bold())
-		} else {
-			fmt.Fprintf(os.Stderr, "%s %s %s %s %s@%s %s\n",
-				color.Sprintf(color.Cyan("[%d]").Bold(), count),
-				result.Time.Format("15:04:05"),
-				color.Red("[FAILURE]").Bold(),
-				result.InstanceID, result.User, result.InstanceName,
-				color.Sprintf(color.Red("%s").Bold(), result.Status))
+		if Config.InlineOutput && result.Stdout != nil {
+			io.Copy(os.Stdout, result.Stdout)
+			os.Stdout.Sync()
 		}
-
 	}
 
 	SSH.Close()
+}
+
+func BuildResultHeader(index int, result *SshResult, color aurora.Aurora) string {
+	var header string
+	if result.Status == nil {
+		header = fmt.Sprintf("%s %s %s %s %s@%s",
+			color.Sprintf(color.Cyan("[%d]").Bold(), index),
+			result.Time.Format("15:04:05"),
+			color.Green("[SUCCESS]").Bold(),
+			result.InstanceID, result.User, result.InstanceName)
+	} else if ee, ok := result.Status.(*ssh.ExitError); ok {
+		var errmsg string
+		if ee.Signal() == "" {
+			errmsg = fmt.Sprintf("%s, returning %d", ee.Error(), ee.ExitStatus())
+		} else {
+			errmsg = fmt.Sprintf("%s, returning %d, signaled with %s", ee.Error(), ee.ExitStatus(), ee.Signal())
+		}
+		header = fmt.Sprintf("%s %s %s %s %s@%s %s",
+			color.Sprintf(color.Cyan("[%d]").Bold(), index),
+			result.Time.Format("15:04:05"),
+			color.Red("[FAILURE]").Bold(),
+			result.InstanceID, result.User, result.InstanceName,
+			color.Red(errmsg).Bold())
+	} else {
+		header = fmt.Sprintf("%s %s %s %s %s@%s [%T] %s",
+			color.Sprintf(color.Cyan("[%d]").Bold(), index),
+			result.Time.Format("15:04:05"),
+			color.Red("[FAILURE]").Bold(),
+			result.InstanceID, result.User, result.InstanceName,
+			result.Status,
+			color.Sprintf(color.Red("%s").Bold(), result.Status))
+	}
+	return header
 }

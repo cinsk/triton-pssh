@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
+	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -21,14 +25,17 @@ type TsshConfig struct {
 	User       string
 	ServerPort int
 
-	BastionUser string
-	BastionName string // Triton instance name
-	BastionPort int
+	BastionUser    string
+	BastionName    string // Triton instance name
+	BastionPort    int
+	BastionAddress string
 
 	Deadline time.Duration // time.Duration
 	Timeout  time.Duration // time.Duration
 
-	InlineOutput bool
+	InlineOutput     bool
+	InlineStdoutOnly bool
+
 	OutDirectory string
 	ErrDirectory string
 	Parallelism  int
@@ -47,7 +54,6 @@ type TsshConfig struct {
 var Config TsshConfig = TsshConfig{
 	BastionUser: "root",
 	BastionPort: 22,
-	BastionName: "bastion",
 
 	ServerPort: 22,
 
@@ -56,7 +62,7 @@ var Config TsshConfig = TsshConfig{
 	Timeout:  time.Duration(10) * time.Second,
 	Deadline: time.Duration(20) * time.Second,
 
-	Parallelism: 32,
+	Parallelism: runtime.NumCPU(),
 	DefaultUser: "root",
 
 	KeyFiles: make([]string, 0),
@@ -65,11 +71,11 @@ var Config TsshConfig = TsshConfig{
 var HomeDirectory string
 var TsshRoot string
 var TritonProfileName string
-var ImageQueryMaxWorkers = 2
-var ImageQueryMaxTries = 3
+var ImageQueryMaxWorkers = 4
+var ImageQueryMaxTries = 2
 
-var NetworkQueryMaxWorkers = 2
-var NetworkQueryMaxTries = 3
+var NetworkQueryMaxWorkers = 4
+var NetworkQueryMaxTries = 2
 
 const VERSION_STRING = "0.1"
 const UNKNOWN_TRITON_PROFILE = "__unknown__"
@@ -104,6 +110,33 @@ func init() {
 
 }
 
+func (config TsshConfig) String() string {
+	buf := bytes.Buffer{}
+
+	buf.WriteString(fmt.Sprintf("KeyId=%s, ", config.KeyId))
+	buf.WriteString(fmt.Sprintf("KeyPath=%s, ", config.KeyPath))
+	buf.WriteString(fmt.Sprintf("AccountName=%s, ", config.AccountName))
+	buf.WriteString(fmt.Sprintf("TritonURL=%s, ", config.TritonURL))
+	buf.WriteString(fmt.Sprintf("User=%s, ", config.User))
+	buf.WriteString(fmt.Sprintf("ServerPort=%d, ", config.ServerPort))
+	buf.WriteString(fmt.Sprintf("BastionUser=%s, ", config.BastionUser))
+	buf.WriteString(fmt.Sprintf("BastionName=%s, ", config.BastionName))
+	buf.WriteString(fmt.Sprintf("BastionPort=%d, ", config.BastionPort))
+	buf.WriteString(fmt.Sprintf("Deadline=%v, ", config.Deadline))
+	buf.WriteString(fmt.Sprintf("Timeout=%s, ", config.Timeout))
+	buf.WriteString(fmt.Sprintf("InlineOutput=%v, ", config.InlineOutput))
+	buf.WriteString(fmt.Sprintf("InlineStdoutOnly=%v, ", config.InlineStdoutOnly))
+	buf.WriteString(fmt.Sprintf("OutDirectory=%s, ", config.OutDirectory))
+	buf.WriteString(fmt.Sprintf("ErrDirectory=%s, ", config.ErrDirectory))
+	buf.WriteString(fmt.Sprintf("Parallelism=%d, ", config.Parallelism))
+	buf.WriteString(fmt.Sprintf("DefaultUser=%s, ", config.DefaultUser))
+	buf.WriteString(fmt.Sprintf("AskPassword=%v, ", config.DefaultUser))
+	buf.WriteString(fmt.Sprintf("NoCache=%v, ", config.NoCache))
+	buf.WriteString(fmt.Sprintf("KeyFiles=%v", config.KeyFiles))
+
+	return buf.String()
+}
+
 func ReverseStrings(ss []string) {
 	last := len(ss) - 1
 	for i := 0; i < len(ss)/2; i++ {
@@ -134,3 +167,37 @@ func CheckOutputDirectory(dir string, createDirectory bool) error {
 		}
 	}
 }
+
+var ParseUserHostPort = func() func(string) (string, string, int, error) {
+	re := regexp.MustCompile("(([^@]+)@)?([^:]+)(:([0-9]+))?")
+	//                          ^^^^^2    ^^^^^3   ^^^^^^^5
+
+	return func(s string) (string, string, int, error) {
+		// s == "user@name"
+		match := re.FindStringSubmatch(s)
+
+		if len(match) != 6 {
+			return "", "", 0, fmt.Errorf("cannot retrive user, host and port from %s", s)
+		}
+
+		user := ""
+		if match[2] != "" {
+			user = match[2]
+		}
+		host := match[3]
+		port := 22
+		if match[5] != "" {
+			p, err := strconv.Atoi(match[5])
+			if err != nil {
+				return "", "", 0, err
+			}
+			if p <= 0 {
+				return "", "", 0, fmt.Errorf("port number must be greater than zero")
+			}
+
+			port = p
+		}
+
+		return user, host, port, nil
+	}
+}()

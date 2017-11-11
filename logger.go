@@ -21,7 +21,7 @@ func init() {
 		Debug = log.New(ioutil.Discard, "DEBUG: ", log.Lshortfile)
 	}
 
-	// Info = log.New(os.Stderr, "INFO: ", log.Lshortfile)
+	Info = log.New(os.Stderr, "INFO: ", log.Lshortfile)
 	Warn = log.New(os.Stderr, "WARNING: ", log.Lshortfile)
 
 }

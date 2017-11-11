@@ -98,7 +98,7 @@ func (s *CacheSession) server() {
 	for {
 		select {
 		case req := <-s.peekChan:
-			Debug.Printf("CacheSession.server[%d]: PEEK: Request(key = %s) received", serial, req.key)
+			// Debug.Printf("CacheSession.server[%d]: PEEK: Request(key = %s) received", serial, req.key)
 			if req == (PeekRequest{}) {
 				break
 			}
@@ -109,7 +109,7 @@ func (s *CacheSession) server() {
 			}(req.receiver, ok)
 
 		case req := <-s.readChan:
-			Debug.Printf("CacheSession.server[%d]: READ: Request(key = %s) received", serial, req.key)
+			// Debug.Printf("CacheSession.server[%d]: READ: Request(key = %s) received", serial, req.key)
 			if req == (ReadRequest{}) {
 				s.finalize()
 				return
@@ -118,26 +118,26 @@ func (s *CacheSession) server() {
 			img, ok := s.db[req.key]
 			if ok {
 				if req.receiver != nil {
-					Debug.Printf("CacheSession.server[%d]: READ: craete goroutine for returning value for key = %s", serial, req.key)
+					// Debug.Printf("CacheSession.server[%d]: READ: craete goroutine for returning value for key = %s", serial, req.key)
 					go func(in chan interface{}, img interface{}) {
 						defer close(in)
 						in <- img
 					}(req.receiver, img)
 				}
 			} else { // s.db[req.key] is not ready.
-				Debug.Printf("CacheSession.server[%d]: READ: no entry in the DB for key = %s", serial, req.key)
+				// Debug.Printf("CacheSession.server[%d]: READ: no entry in the DB for key = %s", serial, req.key)
 
 				if _, ok := s.waitingClients[req.key]; ok {
 					if req.receiver != nil {
 						s.waitingClients[req.key] = append(s.waitingClients[req.key], req.receiver)
-						Debug.Printf("CacheSession.server[%d]: READ: added Request(key = %s) to the waiting list (%d waiters)", serial, req.key, len(s.waitingClients[req.key]))
-						Debug.Printf("CacheSession.server[%d]: READ: waiting list: %v", serial, s.waitingClients[req.key])
+						// Debug.Printf("CacheSession.server[%d]: READ: added Request(key = %s) to the waiting list (%d waiters)", serial, req.key, len(s.waitingClients[req.key]))
+						// Debug.Printf("CacheSession.server[%d]: READ: waiting list: %v", serial, s.waitingClients[req.key])
 					} else {
-						Debug.Printf("CacheSession.server[%d]: READ: Request(key = %s) has no receiver", serial, req.key)
+						// Debug.Printf("CacheSession.server[%d]: READ: Request(key = %s) has no receiver", serial, req.key)
 					}
 
 				} else {
-					Debug.Printf("CacheSession.server[%d]: READ: none in waiting list, send Request(key = %s) to job queue", serial, req.key)
+					// Debug.Printf("CacheSession.server[%d]: READ: none in waiting list, send Request(key = %s) to job queue", serial, req.key)
 					s.waitingClients[req.key] = append(s.waitingClients[req.key], req.receiver)
 					go func(r ReadRequest) {
 						s.jobQueue <- r
@@ -145,14 +145,14 @@ func (s *CacheSession) server() {
 				}
 
 			}
-			Debug.Printf("CacheSession.server[%d]: READ: done Request(key = %s)", serial, req.key)
+			// Debug.Printf("CacheSession.server[%d]: READ: done Request(key = %s)", serial, req.key)
 
 		case req := <-s.writeChan:
 			if req == (WriteRequest{}) {
 				break
 			}
 
-			Debug.Printf("CacheSession.server[%d]: WRITE: Request(key = %s) received", serial, req.key)
+			// Debug.Printf("CacheSession.server[%d]: WRITE: Request(key = %s) received", serial, req.key)
 
 			if _, ok := req.value.(error); ok {
 				if s.CacheOnError {
@@ -169,10 +169,10 @@ func (s *CacheSession) server() {
 						ch <- value
 					}
 				}(waitCh, req.value)
-				Debug.Printf("CacheSession.server[%d]: WRITE: broadcasted value of DB[%s] to all waiters", serial, req.key)
+				// Debug.Printf("CacheSession.server[%d]: WRITE: broadcasted value of DB[%s] to all waiters", serial, req.key)
 			}
 
-			Debug.Printf("CacheSession.server[%d]: WRITE: done Request(key = %s)", serial, req.key)
+			// Debug.Printf("CacheSession.server[%d]: WRITE: done Request(key = %s)", serial, req.key)
 		}
 		serial++
 	}
@@ -184,9 +184,9 @@ func (s *CacheSession) cacheSessionWorker(workerId int) {
 
 	serial := 0
 	for req := range s.jobQueue {
-		Debug.Printf("CacheSession.worker[%d:%d]: retrieved Request(key = %s)", workerId, serial, req.key)
+		// Debug.Printf("CacheSession.worker[%d:%d]: retrieved Request(key = %s)", workerId, serial, req.key)
 
-		Debug.Printf("CacheSession.worker[%d:%d]: calling Updater(key = %s)", workerId, serial, req.key)
+		// Debug.Printf("CacheSession.worker[%d:%d]: calling Updater(key = %s)", workerId, serial, req.key)
 
 		var value interface{}
 		var err error
@@ -205,7 +205,7 @@ func (s *CacheSession) cacheSessionWorker(workerId int) {
 					ch <- req
 				}(s.writeChan, WriteRequest{key: req.key, value: value})
 			*/
-			Debug.Printf("CacheSession.worker[%d:%d]: Updater(%s) success; sending WriteRequest() to the server", workerId, serial, req.key)
+			// Debug.Printf("CacheSession.worker[%d:%d]: Updater(%s) success; sending WriteRequest() to the server", workerId, serial, req.key)
 			s.writeChan <- WriteRequest{key: req.key, value: value}
 		} else {
 			Debug.Printf("CacheSession.worker[%d:%d]: Updater(%s) failure; err = %s", workerId, serial, req.key, err)
@@ -236,13 +236,13 @@ func (s *CacheSession) cacheSessionWorker(workerId int) {
 }
 
 func (s *CacheSession) Prepare(key string) {
-	defer func() { Debug.Printf("Prepare() done") }()
+	// defer func() { Debug.Printf("Prepare() done") }()
 
 	go func() { s.readChan <- ReadRequest{key: key} }()
 }
 
 func (s *CacheSession) Get(key string) (interface{}, error) {
-	defer func() { Debug.Printf("Get() done") }()
+	// defer func() { Debug.Printf("Get() done") }()
 	ch := make(chan interface{})
 	s.readChan <- ReadRequest{key: key, receiver: ch}
 
@@ -255,7 +255,7 @@ func (s *CacheSession) Get(key string) (interface{}, error) {
 }
 
 func (s *CacheSession) Peek(key string) bool {
-	defer func() { Debug.Printf("Peek() done") }()
+	// defer func() { Debug.Printf("Peek() done") }()
 	ch := make(chan bool)
 	s.peekChan <- PeekRequest{key: key, receiver: ch}
 
