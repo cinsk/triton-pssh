@@ -403,11 +403,11 @@ func main() {
 		Err(1, err, "cannot create Triton compute client")
 	}
 
-	ImgCache = NewImageCache(tritonClient.Images())
+	ImgCache = NewImageCache(tritonClient.Images(), Config.ImageCacheExpiration)
 	if nClient, err := network.NewClient(tritonConfig); err != nil {
 		Err(1, err, "cannot create Triton network client")
 	} else {
-		NetCache = NewNetworkCache(nClient)
+		NetCache = NewNetworkCache(nClient, Config.NetworkCacheExpiration)
 	}
 
 	if Config.BastionName != "" {
@@ -431,7 +431,7 @@ func main() {
 
 	SSH := NewSshSession(&Config, Config.Parallelism)
 
-	instanceChan := ListInstances(tritonClient, context.Background())
+	instanceChan := ListInstances(tritonClient, context.Background(), Config.InstanceCacheExpiration)
 
 	inputFile, err := StdinFile()
 	if inputFile != nil {

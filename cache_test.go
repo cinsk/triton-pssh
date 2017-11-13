@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -190,4 +194,184 @@ func TestErrorShouldCached(env *testing.T) {
 	}
 
 	s.Close()
+}
+
+func TestReadDataFromFileCache_Error_on_NoFile(env *testing.T) {
+	_, err := ReadDataFromFileCache("there-is-no-file-with-this-name", time.Duration(1)*time.Minute)
+	if err == nil {
+		env.Errorf("ReadCachedDataFromFile() returns no error on file not found")
+	}
+}
+
+func TestReadDataFromFileCache_Error_on_ExpiredFile(env *testing.T) {
+	f, err := ioutil.TempFile("", "testExpiredCachedFile")
+	if err != nil {
+		env.Errorf("cannot create a file for the testing: %s", err)
+		env.FailNow()
+	}
+	defer func() { os.Remove(f.Name()) }()
+	defer f.Close()
+
+	tm := time.Now().Add(-time.Duration(30) * time.Minute)
+	err = os.Chtimes(f.Name(), tm, tm)
+	if err != nil {
+		env.Errorf("cannot change atime and mtime of the file, test cannot be proceeded: %s", err)
+		env.FailNow()
+	}
+
+	_, err = ReadDataFromFileCache(f.Name(), time.Duration(1)*time.Minute)
+	if err == nil {
+		env.Errorf("ReadCachedDataFromFile() returns no error on expired cached file")
+	}
+
+	if _, err := os.Stat(f.Name()); os.IsNotExist(err) {
+		env.Errorf("ReadCachedDataFromFile() removed the file where it shouldn't")
+	}
+
+}
+
+func TestReadDataFromFileCache_Success_on_RecentFile(env *testing.T) {
+	f, err := ioutil.TempFile("", "testRecentCachedFile")
+	if err != nil {
+		env.Errorf("cannot create a file for the testing: %s", err)
+		env.FailNow()
+	}
+	defer func() { os.Remove(f.Name()) }()
+	defer f.Close()
+
+	_, err = ReadDataFromFileCache(f.Name(), time.Duration(5)*time.Minute)
+	if err != nil {
+		env.Errorf("ReadCachedDataFromFile() returns an error on fresh cached file")
+	}
+
+	if _, err := os.Stat(f.Name()); os.IsNotExist(err) {
+		env.Errorf("ReadCachedDataFromFile() removed the file where it shouldn't")
+	}
+
+}
+
+func TestReadJsonFromFileCache_Error_on_EmptyFile(env *testing.T) {
+	f, err := ioutil.TempFile("", "testRecentCachedFile")
+	if err != nil {
+		env.Errorf("cannot create a file for the testing: %s", err)
+		env.FailNow()
+	}
+	defer func() { os.Remove(f.Name()) }()
+	defer f.Close()
+
+	var obj map[string]interface{}
+	err = ReadJsonFromFileCache(f.Name(), time.Duration(5)*time.Minute, &obj)
+	if err == nil {
+		env.Errorf("ReadCachedDataFromFile() returns no error on empty, fresh cached file")
+	}
+
+	if _, err := os.Stat(f.Name()); os.IsExist(err) {
+		env.Errorf("ReadCachedDataFromFile() didn't remove the file where it should")
+	}
+
+}
+
+func TestReadJsonFromFileCache_Success_On_RecentFile(env *testing.T) {
+	f, err := ioutil.TempFile("", "testRecentCachedFile")
+	if err != nil {
+		env.Errorf("cannot create a file for the testing: %s", err)
+		env.FailNow()
+	}
+	f.WriteString(`{ "name": "John Doe", "age": 42, "alive": false }`)
+	f.Close()
+
+	defer func() { os.Remove(f.Name()) }()
+
+	type Foo struct {
+		Name  string `json:"name"`
+		Age   int    `json:"age"`
+		Alive bool   `json:"alive"`
+	}
+	var foo Foo
+	err = ReadJsonFromFileCache(f.Name(), time.Duration(5)*time.Minute, &foo)
+	if err != nil {
+		env.Errorf("ReadCachedDataFromFile() returns an error: %s", err)
+	}
+
+	if _, err = os.Stat(f.Name()); os.IsNotExist(err) {
+		env.Errorf("ReadCachedDataFromFile() removed the file where it shouldn't")
+	}
+	if foo.Name != "John Doe" || foo.Age != 42 || foo.Alive {
+		env.Errorf("ReadCachedDataFromFile() failed to unmarshal to correct values: %v", foo)
+	}
+}
+
+func TestReadCachedJsonFromFile_Failure_On_JsonParseError(env *testing.T) {
+	f, err := ioutil.TempFile("", "testRecentCachedFile")
+	if err != nil {
+		env.Errorf("cannot create a file for the testing: %s", err)
+		env.FailNow()
+	}
+	f.WriteString(`{ "name": "John Doe, "age": 42, "alive": false }`)
+	f.Close()
+
+	defer func() { os.Remove(f.Name()) }()
+
+	type Foo struct {
+		Name  string `json:"name"`
+		Age   int    `json:"age"`
+		Alive bool   `json:"alive"`
+	}
+	var foo Foo
+	err = ReadJsonFromFileCache(f.Name(), time.Duration(5)*time.Minute, &foo)
+	if err == nil {
+		env.Errorf("ReadCachedDataFromFile() returns no error where it shouldn't")
+	}
+
+	if _, err := os.Stat(f.Name()); err == nil {
+		env.Errorf("ReadCachedDataFromFile() didn't remove the file where it should")
+	}
+}
+
+func TestWriteDataToFileCache_test_creating_directory_if_not_exist(env *testing.T) {
+	fname := fmt.Sprintf("/tmp/triton-pssh.test.%d.%d/file-cache", os.Getpid(), time.Now())
+
+	data := []byte("test data")
+
+	if _, err := os.Stat(filepath.Dir(fname)); err == nil && !os.IsNotExist(err) {
+		env.Errorf("test directory already exists, abort")
+		env.FailNow()
+	}
+	defer os.RemoveAll(filepath.Dir(fname))
+
+	err := WriteDataToFileCache(fname, data)
+	if err != nil {
+		env.Errorf("cannot write a file cache: %s", err)
+	}
+
+	if _, err := os.Stat(fname); err != nil {
+		env.Errorf("file was not creted at the desired path: %s", err)
+	}
+}
+
+func TestWriteDataToFileCache_test_data_is_written_correctly(env *testing.T) {
+	f, err := ioutil.TempFile("", "cached-data")
+	if err != nil {
+		env.Errorf("cannot create a temp file, abort")
+	}
+	defer os.RemoveAll(f.Name())
+
+	f.Close()
+
+	data := []byte("test data")
+	err = WriteDataToFileCache(f.Name(), data)
+
+	if err != nil {
+		env.Errorf("cannot write a file cache: %s", err)
+	}
+
+	read, err := ioutil.ReadFile(f.Name())
+	if err != nil {
+		env.Errorf("cannot read a file cache: %s", err)
+	}
+
+	if bytes.Compare(data, read) != 0 {
+		env.Errorf("cached file content is different from the source")
+	}
+
 }

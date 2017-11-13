@@ -48,7 +48,10 @@ type TsshConfig struct {
 
 	KeyFiles []string
 
-	NoCache bool
+	NoCache                 bool
+	NetworkCacheExpiration  time.Duration
+	ImageCacheExpiration    time.Duration
+	InstanceCacheExpiration time.Duration
 }
 
 var Config TsshConfig = TsshConfig{
@@ -66,6 +69,10 @@ var Config TsshConfig = TsshConfig{
 	DefaultUser: "root",
 
 	KeyFiles: make([]string, 0),
+
+	NetworkCacheExpiration:  time.Duration(24*7) * time.Hour,
+	ImageCacheExpiration:    time.Duration(24*7) * time.Hour,
+	InstanceCacheExpiration: time.Duration(24) * time.Hour,
 }
 
 var HomeDirectory string

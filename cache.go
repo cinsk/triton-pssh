@@ -1,7 +1,14 @@
 package main
 
 import (
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
 	"sync"
+	"time"
 )
 
 type ReadRequest struct {
@@ -260,4 +267,64 @@ func (s *CacheSession) Peek(key string) bool {
 	s.peekChan <- PeekRequest{key: key, receiver: ch}
 
 	return <-ch
+}
+
+func ReadDataFromFileCache(fileName string, expiration time.Duration) ([]byte, error) {
+	stat, err := os.Stat(fileName)
+	if err != nil {
+		return nil, err
+	}
+
+	if stat.ModTime().Add(expiration).Before(time.Now()) {
+		return nil, fmt.Errorf("cache expired")
+	}
+	b, err := ioutil.ReadFile(fileName)
+	if err != nil {
+		remove_err := os.Remove(fileName)
+		if remove_err != nil {
+			return nil, fmt.Errorf("cannot read %s (%s), nor can delete it (%s)", err, remove_err)
+		}
+		return nil, fmt.Errorf("cannot read %s (%s), removed")
+	}
+	return b, nil
+}
+
+func WriteDataToFileCache(fileName string, data []byte) error {
+	os.MkdirAll(filepath.Dir(fileName), 0755)
+
+	f, err := os.Create(fileName)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	err = binary.Write(f, binary.LittleEndian, data)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func ReadJsonFromFileCache(fileName string, expiration time.Duration, v interface{}) error {
+	b, err := ReadDataFromFileCache(fileName, expiration)
+	if err != nil {
+		return err
+	}
+
+	err = json.Unmarshal(b, v)
+	if err != nil {
+		os.Remove(fileName)
+		return err
+	}
+
+	return nil
+}
+
+func WriteJsonToFileCache(fileName string, v interface{}) error {
+	// func WriteDataToFileCache(fileName string, data []byte) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return WriteDataToFileCache(fileName, b)
 }

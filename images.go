@@ -6,24 +6,26 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
+	"time"
 
 	triton "github.com/joyent/triton-go"
 	"github.com/joyent/triton-go/compute"
 )
 
 type ImageCache struct {
-	client *compute.ImagesClient
-	cache  *CacheSession
+	client     *compute.ImagesClient
+	cache      *CacheSession
+	expiration time.Duration
 }
 
-func NewImageCache(client *compute.ImagesClient) *ImageCache {
+func NewImageCache(client *compute.ImagesClient, expiration time.Duration) *ImageCache {
 	cache := ImageCache{}
 
 	cache.client = client
 	cache.cache = NewCacheSession(cache.Updater, 1, true, ImageQueryMaxWorkers)
+	cache.expiration = expiration
 
 	return &cache
 }
@@ -48,13 +50,13 @@ func (s *ImageCache) Prepare(key string) {
 }
 
 func (s *ImageCache) Updater(key string) (interface{}, error) {
-	if img, err := loadImageFromFile(key); err == nil {
+	if img, err := s.loadImageFromFile(key); err == nil {
 		return img, nil
 	}
 
 	img, err := s.client.Get(context.Background(), &compute.GetImageInput{ImageID: key})
 	if err == nil {
-		saveImageToFile(key, img)
+		s.saveImageToFile(key, img)
 	}
 	return img, err
 }
@@ -63,7 +65,7 @@ func imageinfo_pathname(id string) string {
 	return filepath.Join(TsshRoot, "cache", TritonProfileName, "image", id)
 }
 
-func saveImageToFile(id string, info *compute.Image) error {
+func (s *ImageCache) saveImageToFile(id string, info *compute.Image) error {
 	file := imageinfo_pathname(id)
 
 	os.MkdirAll(filepath.Dir(file), 0755)
@@ -85,31 +87,18 @@ func saveImageToFile(id string, info *compute.Image) error {
 	return nil
 }
 
-func loadImageFromFile(id string) (*compute.Image, error) {
+func (s *ImageCache) loadImageFromFile(id string) (*compute.Image, error) {
 	file := imageinfo_pathname(id)
 
 	if Config.NoCache {
 		return nil, fmt.Errorf("Config.NoCache is true")
 	}
-	_, err := os.Stat(file)
-	if err != nil {
-		return nil, fmt.Errorf("no cached found for %s", id)
-	}
-
-	b, err := ioutil.ReadFile(file)
-	if err != nil {
-		os.Remove(file)
-		return nil, fmt.Errorf("cannot read cached image information: %s", file)
-	}
 
 	var info compute.Image
-	err = json.Unmarshal(b, &info)
-	if err != nil {
-		os.Remove(file)
-		return nil, fmt.Errorf("binary.Read(%s) failed: %s", file, err)
+	if err := ReadJsonFromFileCache(file, s.expiration, &info); err != nil {
+		return nil, err
 	}
-	// TODO: need to check INFO whether it's genuine; IOW, remove it if it is empty (zero).
-	//       at least it should have id, and one or more networks.
+
 	return &info, nil
 }
 
@@ -140,7 +129,7 @@ func images_main() {
 	config := triton.ClientConfig{TritonURL: url, AccountName: accountName, Signers: signers}
 
 	cClient, err := compute.NewClient(&config)
-	session := NewImageCache(cClient.Images())
+	session := NewImageCache(cClient.Images(), time.Duration(30)*time.Second)
 
 	scanner := bufio.NewScanner(os.Stdin)
 
