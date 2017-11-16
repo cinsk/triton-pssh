@@ -101,15 +101,29 @@ Here are `triton-pssh` specific parameters:
 * type - Triton instance type
 * brand - Triton zone brand
 * state - instance state
-* image - Triton image ID of this instance
-* ips - an array of IP addresses in string
 * memory - memory size (unit: GB)
 * disk - disk size
-* tags - a set of tags (key: string, value: string)
-* networks - an array of network IDs in string
+* ips - an array of IP addresses in string
 * primaryIp - primary IP address of this machine
 * package - Triton package name of this instance
-* dns_names - an array of DNS names for this instance
+
+Parameters below are subjected to change due to the internal expression evalator implementation:
+
+* tags - a set of tags (key: string, value: string) 
+* image - Triton image ID of this instance 
+* image_id - Triton image ID of this instance
+* image_name - Triton image name of this instance
+* image_version - Triton image version of this instance
+* image_os - Triton image OS of this instance
+* image_type - Triton image type of this instance
+* image_public - boolean value whether this image is public
+* image_state - Triton image state
+* image_tags - Tags associated with the image
+* image_owner - Triton image owner of this image
+* image_published_at - date of Triton image published
+
+* networks - an array of network IDs in string 
+
 
 Note that running `triton instance get` will give you the complete list of parameters.
 

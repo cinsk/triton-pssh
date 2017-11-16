@@ -74,6 +74,7 @@ var Options = []OptionSpec{
 	{OPTION_PASSWORD, "password", NO_ARGUMENT},
 	{'I', "identity", ARGUMENT_REQUIRED},
 	{OPTION_NOCACHE, "no-cache", NO_ARGUMENT},
+	{'1', "interactive", NO_ARGUMENT},
 }
 
 func init() {
@@ -219,6 +220,8 @@ func ParseOptions(args []string) []string {
 			Config.AskPassword = true
 		case "no-cache":
 			Config.NoCache = true
+		case "interactive":
+			Config.Interactive = true
 		default:
 			Err(1, err, "unrecognized option -- %s", opt.LongOption)
 		}
@@ -257,7 +260,7 @@ func TritonClientConfig(config *TsshConfig) *triton.ClientConfig {
 }
 
 func SplitArgs(args []string) (string, string) {
-	if len(args) < 2 {
+	if !Config.Interactive && len(args) < 2 {
 		Err(0, nil, "wrong number of argument(s)")
 		Err(1, nil, "Try with --help for more")
 	}
@@ -286,7 +289,7 @@ func SplitArgs(args []string) (string, string) {
 		p = "true"
 	}
 
-	if c == "" {
+	if !Config.Interactive && c == "" {
 		Err(0, nil, "no command specified")
 		Err(1, nil, "you might miss to use ::: delimiter")
 	}
@@ -380,15 +383,16 @@ func IsDockerContainer(instance *compute.Instance) bool {
 	}
 }
 
-var ImgCache *ImageCache
-var NetCache *NetworkCache
-
 func main() {
 	Debug.Printf("Os.Args: %v\n", os.Args)
 	args := ParseOptions(os.Args[1:])
 	Debug.Printf("Config: %v", Config)
 
 	expr, cmdline := SplitArgs(args)
+	if Config.Interactive && cmdline != "" {
+		Err(1, nil, "interactive mode cannot accept COMMAND...")
+	}
+
 	Debug.Printf("Filter Expr: %s\n", expr)
 	Debug.Printf("Command: %s\n", cmdline)
 
@@ -446,8 +450,12 @@ func main() {
 		if IsDockerContainer(instance) {
 			continue
 		}
+		img, err := ImgCache.Get(instance.Image)
+		if err != nil {
+			img = &compute.Image{ID: instance.Image}
+		}
 
-		result, error := Evaluate(instance, expr)
+		result, error := Evaluate(instance, img, expr)
 		if error != nil {
 			Warn.Printf("warning: expr evaluation failed: %s", error)
 			continue
@@ -460,10 +468,16 @@ func main() {
 		// fmt.Printf("INSTANCE[%v]: hasPublicNet(%v)\n", instance.Name, hasPublicNet(instance))
 		// fmt.Printf("# %s [%v]:\n", instance.ID, instance.Name)
 
-		job, err := SSH.BuildJob(instance, cmdline, inputFile)
+		auths := AuthMethods()
+		job, err := SSH.BuildJob(instance, auths, cmdline, inputFile)
 		if err != nil {
 			Warn.Printf("warning: cannot create SSH job: %s", err)
 			continue
+		}
+
+		if Config.Interactive {
+			SSH.Print(job)
+			os.Exit(0)
 		}
 
 		jobWg.Add(1)

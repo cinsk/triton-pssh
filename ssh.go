@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,7 +75,7 @@ func NewSshSession(config *TsshConfig, nworkers int) *SshSession {
 	return &session
 }
 
-func (s *SshSession) BuildJob(instance *compute.Instance, command string, stdin *os.File) (*SshJob, error) {
+func (s *SshSession) BuildJob(instance *compute.Instance, auths []ssh.AuthMethod, command string, stdin *os.File) (*SshJob, error) {
 	user := s.config.User
 	if user == "" {
 		img, _ := ImgCache.Get(instance.Image)
@@ -87,7 +88,7 @@ func (s *SshSession) BuildJob(instance *compute.Instance, command string, stdin 
 
 	job.ServerConfig = &ssh.ClientConfig{
 		User:            user,
-		Auth:            AuthMethods(),
+		Auth:            auths,
 		Timeout:         s.config.Timeout,
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
 	}
@@ -357,6 +358,37 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 	wg.Wait()
 
 	return result
+}
+
+func (s *SshSession) Print(job *SshJob) error {
+	buf := bytes.Buffer{}
+
+	buf.WriteString("cmdline=(")
+	buf.WriteString("ssh ")
+	buf.WriteString("-A -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ")
+
+	if job.BastionConfig != nil {
+		toks := strings.Split(job.Bastion, ":")
+		if len(toks) != 2 {
+			return fmt.Errorf("cannot get host:port from %s", job.Bastion)
+		}
+
+		buf.WriteString(fmt.Sprintf("-o \"ProxyCommand=ssh -p %s -q %s@%s nc %%h %%p\" ", toks[1], job.BastionConfig.User, toks[0]))
+	}
+
+	toks := strings.Split(job.Server, ":")
+	if len(toks) != 2 {
+		return fmt.Errorf("cannot get host:port from %s", job.Server)
+	}
+
+	buf.WriteString(fmt.Sprintf("-p %s ", toks[1]))
+	buf.WriteString(fmt.Sprintf("\"%s@%s\"", job.ServerConfig.User, toks[0]))
+	buf.WriteString(")\n")
+	buf.WriteString("\"${cmdline[@]}\"")
+
+	Debug.Printf("CMDLINE: %v", buf.String())
+	fmt.Println(buf.String())
+	return nil
 }
 
 func (s *SshSession) sshClient(endpoint string, config *ssh.ClientConfig) (*ssh.Client, error) {

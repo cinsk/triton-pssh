@@ -1,9 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/Knetic/govaluate"
 	"github.com/joyent/triton-go/compute"
@@ -96,15 +96,58 @@ var UserFunctions = map[string]govaluate.ExpressionFunction{
 	},
 }
 
-func Evaluate(instance *compute.Instance, expression string) (bool, error) {
-	b, err := json.Marshal(*instance)
+func buildContext(instance *compute.Instance, image *compute.Image) map[string]interface{} {
+	context := make(map[string]interface{})
 
-	if err != nil {
-		return false, fmt.Errorf("failure on unmarshalling Instance type: %s", err)
+	// I wanted to explosing the genuien name as the output of Trion Cloud API, not the field name in Golang struct.
+	// which may not possible with GOVALUATE.
+	context["id"] = instance.ID
+	context["name"] = instance.Name
+	context["type"] = instance.Type
+	context["brand"] = instance.Brand
+	context["state"] = instance.State
+	context["memory"] = instance.Memory
+	context["disk"] = instance.Disk
+	context["created"] = instance.Created
+	context["updated"] = instance.Updated
+	context["docker"] = instance.Docker
+	context["ips"] = instance.IPs
+	context["primaryIp"] = instance.PrimaryIP
+	context["firewall_enabled"] = instance.FirewallEnabled
+	context["compute_node"] = instance.ComputeNode
+	context["package"] = instance.Package
+
+	// parameters below here are subjected to change
+	context["tags"] = instance.Tags
+	context["image"] = instance.Image
+
+	context["image_id"] = image.ID
+	context["image_name"] = image.Name
+	context["image_version"] = image.Version
+	context["image_os"] = image.OS
+	context["image_type"] = image.Type
+	context["image_public"] = image.Public
+	context["image_state"] = image.State
+	context["image_tags"] = image.Tags
+	context["image_owner"] = image.Owner
+	context["image_published_at"] = image.PublishedAt
+
+	context["networks"] = instance.Networks
+	context["has_public_net"] = NetCache.HasPublic(instance)
+
+	return context
+}
+
+func Evaluate(instance *compute.Instance, image *compute.Image, expression string) (bool, error) {
+	context := buildContext(instance, image)
+
+	{
+		tokens := strings.Fields(expression)
+
+		if len(tokens) == 1 && tokens[0] != "true" && tokens[0] != "false" && tokens[0][0] != '"' {
+			expression = fmt.Sprintf("name == \"%s\"", tokens[0])
+		}
 	}
-
-	var context map[string]interface{}
-	json.Unmarshal(b, &context)
 
 	ev, err := govaluate.NewEvaluableExpressionWithFunctions(expression, UserFunctions)
 

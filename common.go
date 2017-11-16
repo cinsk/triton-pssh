@@ -52,6 +52,8 @@ type TsshConfig struct {
 	NetworkCacheExpiration  time.Duration
 	ImageCacheExpiration    time.Duration
 	InstanceCacheExpiration time.Duration
+
+	Interactive bool
 }
 
 var Config TsshConfig = TsshConfig{
@@ -83,6 +85,9 @@ var ImageQueryMaxTries = 2
 
 var NetworkQueryMaxWorkers = 4
 var NetworkQueryMaxTries = 2
+
+var ImgCache *ImageCache
+var NetCache *NetworkCache
 
 const VERSION_STRING = "0.1"
 const UNKNOWN_TRITON_PROFILE = "__unknown__"
