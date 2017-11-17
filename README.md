@@ -90,40 +90,43 @@ This usually means, that the SSH session timed out. A quick solution is to give 
         [1] 21:03:36 [SUCCESS] 70db2402-ad4b-6297-a8ea-f84b361160d4 root@bastion
 
 
+
+
+
 ## Expressions
 
 `triton-pssh` uses [govaluate](https://github.com/Knetic/govaluate) to parse and to evaluate the expression.  Most simple C-like expressions are supported.  Check [govaluate manual](https://github.com/Knetic/govaluate/blob/master/MANUAL.md) for details.
 
 Here are `triton-pssh` specific parameters:
    
-* id - Triton instance ID
-* name - Triton instance name
-* type - Triton instance type
-* brand - Triton zone brand
-* state - instance state
-* memory - memory size (unit: GB)
-* disk - disk size
-* ips - an array of IP addresses in string
-* primaryIp - primary IP address of this machine
-* package - Triton package name of this instance
+* id -- Triton instance ID
+* name -- Triton instance name
+* type -- Triton instance type
+* brand -- Triton zone brand
+* state -- instance state
+* memory -- memory size (unit: GB)
+* disk -- disk size
+* ips -- an array of IP addresses in string
+* primaryIp -- primary IP address of this machine
+* package -- Triton package name of this instance
 
 Parameters below are subjected to change due to the internal expression evalator implementation:
 
-* tags - a set of tags (key: string, value: string) 
-* image - Triton image ID of this instance 
-* image_id - Triton image ID of this instance
-* image_name - Triton image name of this instance
-* image_version - Triton image version of this instance
-* image_os - Triton image OS of this instance
-* image_type - Triton image type of this instance
-* image_public - boolean value whether this image is public
-* image_state - Triton image state
-* image_tags - Tags associated with the image
-* image_owner - Triton image owner of this image
-* image_published_at - date of Triton image published
+* tags -- a set of tags (key: string, value: string) 
+* image -- Triton image ID of this instance 
+* image_id -- Triton image ID of this instance
+* image_name -- Triton image name of this instance
+* image_version -- Triton image version of this instance
+* image_os -- Triton image OS of this instance
+* image_type -- Triton image type of this instance
+* image_public -- boolean value whether this image is public
+* image_state -- Triton image state
+* image_tags -- Tags associated with the image
+* image_owner -- Triton image owner of this image
+* image_published_at -- date of Triton image published
 
-* networks - an array of network IDs in string 
-
+* networks -- an array of network IDs in string 
+* has_public_net -- boolean that indicates whether this instance has public IP address
 
 Note that running `triton instance get` will give you the complete list of parameters.
 
@@ -150,17 +153,25 @@ For example, if you want to find instances with a tag `role=zookeeper`, you coul
 If you want to find instances with specific network id, you could do:
 
         $ triton-pssh 'contains(networks, "1234-1234-1234-1234")' ::: command...
-        
-TODO: complete the documentation
 
-        $ triton-pssh -i 'contains(tags, "role", "zookeeper")' ::: uptime
-        $ triton-pssh -i 'ispublic(networks)' ::: uptime
-        $ triton-pssh -i '!ispublic(networks)' ::: uptime
-        $ triton-pssh -i 'brand != "lx"' ::: hostname
-        $ triton-pssh -i 'memory >= 1024' ::: hostname
-        $ triton-pssh -i 'package == "g4-highcpu-1G" && !contains(tags, "sdc_docker", true)' ::: uptime
+To find any instance without public IP address:
 
-    
+        $ triton-pssh '!has_public_net' ::: command...
+
+To find any instance that uses Joyent SmartOS or LX brand:
+
+        $ triton-pssh 'brand == "joyent" || brand == "lx"' ::: command...
+
+### Experimental shortcut
+
+Note that any feature in this section may be removed if the implementation of the expression evaluator changes.
+
+If the expression is just one word, not a string, and neither  `true` or `false`, and an identifier which is not a parameter name above, then it will considered as a name of the instance.   For example, following two command lines are identical:
+
+        $ triton-pssh --no-cache 'name == "foo"' ::: uptime
+        $ triton-pssh --no-cache name ::: uptime
+
+
 
 ## Authentication
 
@@ -168,15 +179,53 @@ TODO: complete the documentation
 
 Use `-i KEYFILE` to provide additional private key file for public key authentication.
 
-USe `--password` to use password authentication.  However, you cannot provide extra input through a pipe to `triton-pssh` in this case.
+Use `--password` to use password authentication.  However, you cannot provide extra input through a pipe to `triton-pssh` in this case.
 
-`triton-pssh` will automatically determine the user of the remote host by looking at the Triton image of the instance.  If `triton-pssh` cannot determine the user name from Triton image API, it will use *root* by default.  You can override the default user name via `--default-user=USER` option.  Note that this value only works if querying to Triton image API failed.
-To override the user for the connection to all instannces, use `-u` option.
+## User name
+
+`triton-pssh` will automatically determine the user of the remote host by looking at the Triton image of the instance.  For example, if the instance uses certain Ubuntu machine, it will use *ubuntu* as the user name.   If you want to override the user name of all instances, use `-u` option to override it.  In this case, default user name in the Triton image will be ignored.
+
+If you did not specify `-u` option, and if `triton-pssh` cannot determine the user name from Triton image API, it will use *root* by default.  You can override the default user name via `--default-user=USER` option.  Note that this value only works if querying to Triton image API failed.
 
 
 ## File Cache
 
-By default, `triton-pssh` will cache all information acquired from [Triton Cloud API](https://apidocs.joyent.com/cloudapi/) for certain period.  The location of the cache is `$HOME/.tssh/cache`.   If you do not want to use cached information, add `--no-cache` option.  Note that even if with `--no-cache` the information will be still cached for the later use.
+`triton-pssh` will cache all information acquired from [Triton Cloud API](https://apidocs.joyent.com/cloudapi/) for certain period.  The location of the cache is `$HOME/.triton-pssh/cache`.   If you do not want to use cached information, add `--no-cache` option.  This is epecially helpful, if you remove an instance and create another one with the same name.  
+
+Note that `--no-cache` option will instruct `triton-pssh` to query Triton Cloud API and update the cache, but unaffected cached entries will still stay.    If there is a corrupted cache file in that directory, try to remove the directory, `$HOME/.triton-pssh/cache` manually.
+
+By default, `triton-pssh` will cache instance information for one day, and will cache network/image information for one week.
+
+
+# Bastion server
+
+Thanks to [Golang SSH package](https://godoc.org/golang.org/x/crypto/ssh), `triton-pssh` does not require a proxy utility in a Bastion server.  Any server that has appropriate network will serve.   For example,
+
+        $ triton instance create -n bastion -N Joyent-SDC-Public -N Joyent-SDC-Private -N My-Fabric-Network base-64 g4-highcpu-1G
+
+Or, you could use the Terraform to create a Bastion server.  I also created a module for that.  See [terraform-triton-bastion](https://github.com/cinsk/terraform-triton-bastion) for more.
+
+# Limitation
+
+Unlike `pssh`, `triton-pssh` does not depend on ssh(1) client but uses [Golang SSH package](https://godoc.org/golang.org/x/crypto/ssh).   Some of the features like *ControlMaster* in ssh(1) may not available.
+
+# Utility: triton-ssh.sh
+
+FYI, `triton` command line tool gives you to connect a Triton instance via
+
+        $ triton ssh INSTANCE-NAME
+
+Currently, it only allows you to connect a Triton instance if and only if the instance has a public IP address.
+
+This package provides `triton-ssh.sh` which allows you to use ssh(1) client to connect a Triton instance interactively.
+
+You can use the same expression syntax that you'd use with `triton-pssh` in `triton-ssh.sh`:
+
+        $ triton-ssh.sh my-instance      # connect the instance with the name, "my-instance"
+        $ triton-ssh.sh -b bastion 'name == "foo"'  # connect the instance, "foo" through the Bastion, "bastion"
+
+If the expression matches to more than one instance, `triton-ssh.sh` will just connect the first machine it matches.
+
 
 
 
