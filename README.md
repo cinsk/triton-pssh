@@ -1,4 +1,7 @@
+
 # triton-pssh
+
+<img src="https://www.joyent.com/assets/img/triton-logo.svg"/>
 
 `triton-pssh` is a program executing ssh in parallel on Triton machine instances.  It provides features such as sending input to all of the processes, saving output to files, and timing out.
 
