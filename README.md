@@ -220,7 +220,7 @@ FYI, `triton` command line tool gives you to connect a Triton instance via
 
 Currently, it only allows you to connect a Triton instance if and only if the instance has a public IP address.
 
-This package provides `triton-ssh.sh` which allows you to use ssh(1) client to connect a Triton instance interactively.
+This package provides `etc/triton-ssh.sh` which allows you to use ssh(1) client to connect a Triton instance interactively.
 
 You can use the same expression syntax that you'd use with `triton-pssh` in `triton-ssh.sh`:
 
@@ -229,6 +229,17 @@ You can use the same expression syntax that you'd use with `triton-pssh` in `tri
 
 If the expression matches to more than one instance, `triton-ssh.sh` will just connect the first machine it matches.
 
+# Emacs binding:
 
+This package provides `etc/triton-ssh.el` to provide `M-x triton-ssh` command to Emacs.
+
+Add following to your `$HOME/.emacs` to register it.
+
+```
+(add-to-list 'load-path (expand-file-name
+                          (concat (getenv "GOPATH")
+                            "/src/github.com/cinsk/triton-pssh/emacs/triton-ssh.el"))
+(require 'triton-ssh)
+```
 
 
