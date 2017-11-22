@@ -445,7 +445,7 @@ func main() {
 
 	jobWg := sync.WaitGroup{}
 	resultChannel := make(chan SshResult)
-
+	matched := 0
 	for instance := range instanceChan {
 		if IsDockerContainer(instance) {
 			continue
@@ -465,6 +465,7 @@ func main() {
 			continue
 		}
 
+		matched++
 		// fmt.Printf("INSTANCE[%v]: hasPublicNet(%v)\n", instance.Name, hasPublicNet(instance))
 		// fmt.Printf("# %s [%v]:\n", instance.ID, instance.Name)
 
@@ -477,6 +478,10 @@ func main() {
 
 		if Config.Interactive {
 			SSH.Print(job)
+			if matched == 0 {
+				Err(0, nil, "no instance matched to your request.")
+				Err(1, nil, "Consider using `--no-cache' option to update the cache")
+			}
 			os.Exit(0)
 		}
 
@@ -510,6 +515,11 @@ func main() {
 	}
 
 	SSH.Close()
+
+	if matched == 0 {
+		Err(0, nil, "no instance matched to your request.")
+		Err(1, nil, "Consider using `--no-cache' option to update the cache")
+	}
 }
 
 func BuildResultHeader(index int, result *SshResult, color aurora.Aurora) string {
