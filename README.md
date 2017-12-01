@@ -200,7 +200,7 @@ Note that `--no-cache` option will instruct `triton-pssh` to query Triton Cloud 
 By default, `triton-pssh` will cache instance information for one day, and will cache network/image information for one week.
 
 
-# Bastion server
+## Bastion server
 
 Thanks to [Golang SSH package](https://godoc.org/golang.org/x/crypto/ssh), `triton-pssh` does not require a proxy utility in a Bastion server.  Any server that has appropriate network will serve.   For example,
 
@@ -212,7 +212,8 @@ Or, you could use the Terraform to create a Bastion server.  I also created a mo
 
 Unlike `pssh`, `triton-pssh` does not depend on ssh(1) client but uses [Golang SSH package](https://godoc.org/golang.org/x/crypto/ssh).   Some of the features like *ControlMaster* in ssh(1) may not available.
 
-# Utility: triton-ssh.sh
+# Utilities
+## Utility: triton-ssh.sh
 
 FYI, `triton` command line tool gives you to connect a Triton instance via
 
@@ -234,7 +235,7 @@ If you want to pass `ssh(1)` options, append after `:::`, like this:
         $ triton-ssh.sh -b bastion my-private-instance ::: -M -v
 
 
-# Utility: triton-scp.sh
+## Utility: triton-scp.sh
 
 This is a `scp(1)` wrapper, automatically adds all required `scp` options acquired from `triton-pssh`.  This is especially helpful if you want to copy one or more fils to the host which does not have public IP.
 
@@ -250,7 +251,7 @@ You could also pass extra `scp(1)` options right after `:::`.  Below example pas
 
         $ triton-scp -b my-bastion my-private-instance ::: -r file1 file2 file3 {}:
 
-# Utility: triton-rsync.sh
+## Utility: triton-rsync.sh
 
 This is a `rsync(1)` wrapper, automatically adds required `rsync` options acquired from `triton-pssh`.  This is especially helpful if you want to copy one or more fils to the host which does not have public IP.
 
@@ -262,7 +263,7 @@ For example, if you want to transfer file1, file2, and file3 to the directory `t
 
 The placeholder `{}` will be automatically replaced to the IP address of `my-private-instance`.
 
-# Emacs binding:
+## Emacs binding:
 
 This package provides `etc/triton-ssh.el` to provide `M-x triton-ssh` command to Emacs.
 
@@ -275,4 +276,14 @@ Add following to your `$HOME/.emacs` to register it.
 (require 'triton-ssh)
 ```
 
+
+# License
+
+MPL 2.0
+
+## Credits
+
+Thanks to the packages that this project depends on.
+
+* Govaluate - https://github.com/Knetic/govaluate
 

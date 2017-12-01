@@ -126,13 +126,20 @@ Option:
       --help               display this help and exit
       --version            output version information and exit
 
+See https://github.com/cinsk/triton-pssh for FILTER-EXPRESSION and examples.
+
 `
 	fmt.Printf(msg)
 	os.Exit(0)
 }
 
 func VersionAndExit() {
-	fmt.Printf("%s version %s\n", ProgramName, VERSION_STRING)
+	msg := `
+triton-pssh and other scripts come without warranty of any kind.
+triton-pssh and other scripts are covered by MPL 2.0 License.`
+
+	fmt.Printf("%s version %s", ProgramName, VERSION_STRING)
+	fmt.Println(msg)
 	os.Exit(0)
 }
 
