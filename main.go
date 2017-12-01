@@ -74,7 +74,8 @@ var Options = []OptionSpec{
 	{OPTION_PASSWORD, "password", NO_ARGUMENT},
 	{'I', "identity", ARGUMENT_REQUIRED},
 	{OPTION_NOCACHE, "no-cache", NO_ARGUMENT},
-	{'1', "interactive", NO_ARGUMENT},
+	{'1', "ssh", NO_ARGUMENT},
+	{'2', "scp", NO_ARGUMENT},
 }
 
 func init() {
@@ -220,8 +221,10 @@ func ParseOptions(args []string) []string {
 			Config.AskPassword = true
 		case "no-cache":
 			Config.NoCache = true
-		case "interactive":
-			Config.Interactive = true
+		case "ssh":
+			Config.Interactive = MODE_SSH
+		case "scp":
+			Config.Interactive = MODE_SCP
 		default:
 			Err(1, err, "unrecognized option -- %s", opt.LongOption)
 		}
@@ -260,7 +263,7 @@ func TritonClientConfig(config *TsshConfig) *triton.ClientConfig {
 }
 
 func SplitArgs(args []string) (string, string) {
-	if !Config.Interactive && len(args) < 2 {
+	if Config.Interactive == MODE_PSSH && len(args) < 2 {
 		Err(0, nil, "wrong number of argument(s)")
 		Err(1, nil, "Try with --help for more")
 	}
@@ -289,7 +292,7 @@ func SplitArgs(args []string) (string, string) {
 		p = "true"
 	}
 
-	if !Config.Interactive && c == "" {
+	if Config.Interactive == MODE_PSSH && c == "" {
 		Err(0, nil, "no command specified")
 		Err(1, nil, "you might miss to use ::: delimiter")
 	}
@@ -389,9 +392,9 @@ func main() {
 	Debug.Printf("Config: %v", Config)
 
 	expr, cmdline := SplitArgs(args)
-	if Config.Interactive && cmdline != "" {
-		Err(1, nil, "interactive mode cannot accept COMMAND...")
-	}
+	// if Config.Interactive && cmdline != "" {
+	// 	Err(1, nil, "interactive mode cannot accept COMMAND...")
+	// }
 
 	Debug.Printf("Filter Expr: %s\n", expr)
 	Debug.Printf("Command: %s\n", cmdline)
@@ -476,8 +479,11 @@ func main() {
 			continue
 		}
 
-		if Config.Interactive {
-			SSH.Print(job)
+		if Config.Interactive != MODE_PSSH {
+			err := SSH.Print(job, Config.Interactive)
+			if err != nil {
+				Err(1, err, "failed to build the command-line")
+			}
 			if matched == 0 {
 				Err(0, nil, "no instance matched to your request.")
 				Err(1, nil, "Consider using `--no-cache' option to update the cache")

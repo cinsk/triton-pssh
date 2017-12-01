@@ -229,6 +229,29 @@ You can use the same expression syntax that you'd use with `triton-pssh` in `tri
 
 If the expression matches to more than one instance, `triton-ssh.sh` will just connect the first machine it matches.
 
+If you want to pass `ssh(1)` options, append after `:::`, like this:
+
+        $ triton-ssh.sh -b bastion my-private-instance ::: -M -v
+
+
+# Utility: triton-scp.sh
+
+This is a `scp(1)` wrapper, automatically adds all scp options acquired from `triton-pssh`.  This is especially helpful if you want to copy one or more fils to the host which does not have public IP.
+
+        Usage: triton-scp.sh INSTANCE-NAME ::: [SCP-OPTION...] SOURCE... {}:[DEST]
+
+For example, if you want to copy file1, file2, and file3 to the directory `tmp/`, in the remote host `my-private-instance` via Bastion server, `my-bastion`, use following command-line:
+    
+        $ triton-scp -b my-bastion my-private-instance ::: file1 file2 file3 {}:/tmp
+
+The placeholder `{}` will be automatically replaced to the IP address of `my-private-instance`.
+
+You could also pass extra `scp(1)` options right after `:::`.  Below example passes `-v` option to the `scp(1)` program:
+
+        $ triton-scp -b my-bastion my-private-instance ::: -v file1 file2 file3 {}:
+
+One limitation. Due to the lack of parsing module, DEST should not contain whitespaces, and quoting is not supported.
+
 # Emacs binding:
 
 This package provides `etc/triton-ssh.el` to provide `M-x triton-ssh` command to Emacs.

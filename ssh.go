@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,14 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
+
+const (
+	MODE_PSSH = iota
+	MODE_SSH
+	MODE_SCP
+)
+
+var regexpHost = regexp.MustCompile(" +\\{\\}:")
 
 type SshJob struct {
 	ServerConfig  *ssh.ClientConfig
@@ -360,12 +369,17 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 	return result
 }
 
-func (s *SshSession) Print(job *SshJob) error {
+func (s *SshSession) Print(job *SshJob, mode int) error {
 	buf := bytes.Buffer{}
 
 	buf.WriteString("cmdline=(")
-	buf.WriteString("ssh ")
-	buf.WriteString("-A -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ")
+
+	if mode == MODE_SSH {
+		buf.WriteString("ssh -A ")
+	} else {
+		buf.WriteString("scp ")
+	}
+	buf.WriteString("-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ")
 
 	if job.BastionConfig != nil {
 		toks := strings.Split(job.Bastion, ":")
@@ -381,9 +395,25 @@ func (s *SshSession) Print(job *SshJob) error {
 		return fmt.Errorf("cannot get host:port from %s", job.Server)
 	}
 
-	buf.WriteString(fmt.Sprintf("-p %s ", toks[1]))
-	buf.WriteString(fmt.Sprintf("\"%s@%s\"", job.ServerConfig.User, toks[0]))
-	buf.WriteString(")\n")
+	if mode == MODE_SSH {
+		buf.WriteString(fmt.Sprintf("-p %s ", toks[1]))
+		buf.WriteString(job.Command + " ")
+		buf.WriteString(fmt.Sprintf("\"%s@%s\"", job.ServerConfig.User, toks[0]))
+		buf.WriteString(")\n")
+	} else {
+		buf.WriteString(fmt.Sprintf("-P %s ", toks[1]))
+		buf.WriteString(job.Command + " ")
+
+		if regexpHost.FindStringIndex(buf.String()) != nil {
+			cmdline := regexpHost.ReplaceAllLiteralString(buf.String(), fmt.Sprintf(" %s@%s:", job.ServerConfig.User, toks[0]))
+			buf.Reset()
+			buf.WriteString(cmdline)
+		} else {
+			return fmt.Errorf("placeholder {} not found")
+		}
+		buf.WriteString(")\n")
+	}
+
 	buf.WriteString("\"${cmdline[@]}\"")
 
 	Debug.Printf("CMDLINE: %v", buf.String())
