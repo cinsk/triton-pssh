@@ -18,13 +18,16 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
+type PrintConfMode int
+
 const (
-	MODE_PSSH = iota
+	MODE_PSSH PrintConfMode = iota
 	MODE_SSH
 	MODE_SCP
+	MODE_RSYNC
 )
 
-var regexpHost = regexp.MustCompile(" +\\{\\}:")
+var regexpHost = regexp.MustCompile("([ \t]*)\\{\\}(.*)$")
 
 type SshJob struct {
 	ServerConfig  *ssh.ClientConfig
@@ -369,17 +372,123 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 	return result
 }
 
-func (s *SshSession) Print(job *SshJob, mode int) error {
+func ExpandPlaceholder(command string, repl string) (string, error) {
+	if regexpHost.FindStringIndex(command) == nil {
+		return "", fmt.Errorf("placeholder {} not found")
+	}
+
+	replaced := regexpHost.ReplaceAllString(command, fmt.Sprintf("$1\"%v$2\"", repl))
+	return replaced, nil
+}
+
+func PrintScpConf(out *bytes.Buffer, bastion string, bastionPort string, bastionUser string, host string, hostPort string, hostUser string, command string) error {
+	// the output should be the bash array literal, (".." "..." ...)
+	var bEndpoint, hEndpoint string
+	if bastionUser == "" {
+		bEndpoint = fmt.Sprintf("%s", bastion)
+	} else {
+		bEndpoint = fmt.Sprintf("%s@%s", bastionUser, bastion)
+	}
+	if hostUser == "" {
+		hEndpoint = fmt.Sprintf("%s", host)
+	} else {
+		hEndpoint = fmt.Sprintf("%s@%s", hostUser, host)
+	}
+
+	out.WriteString("(")
+	out.WriteString("scp ")
+	out.WriteString("-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ")
+
+	if bastion != "" {
+		out.WriteString(fmt.Sprintf("-o \"ProxyCommand=ssh -p %s -q %s nc %%h %%p\" ", bastionPort, bEndpoint))
+	}
+
+	out.WriteString(fmt.Sprintf("-P %s ", hostPort))
+
+	replaced, err := ExpandPlaceholder(command, hEndpoint)
+	if err != nil {
+		return err
+	}
+	out.WriteString(replaced)
+	out.WriteString(")")
+
+	return nil
+}
+
+func PrintRsyncConf(out *bytes.Buffer, bastion string, bastionPort string, bastionUser string, host string, hostPort string, hostUser string, command string) error {
+	// the output should be the bash array literal, (".." "..." ...)
+	var bEndpoint, hEndpoint string
+	if bastionUser == "" {
+		bEndpoint = fmt.Sprintf("%s", bastion)
+	} else {
+		bEndpoint = fmt.Sprintf("%s@%s", bastionUser, bastion)
+	}
+	if hostUser == "" {
+		hEndpoint = fmt.Sprintf("%s", host)
+	} else {
+		hEndpoint = fmt.Sprintf("%s@%s", hostUser, host)
+	}
+
+	out.WriteString("(")
+	out.WriteString("rsync ")
+	out.WriteString("-e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ")
+
+	if bastion != "" {
+		out.WriteString(fmt.Sprintf("-o \"ProxyCommand=ssh -p %s -q %s nc %%h %%p\" ", bastionPort, bEndpoint))
+	}
+	out.WriteString(fmt.Sprintf("-p %s' ", hostPort))
+
+	replaced, err := ExpandPlaceholder(command, hEndpoint)
+	if err != nil {
+		return err
+	}
+	out.WriteString(replaced)
+	out.WriteString(")")
+
+	return nil
+}
+
+func PrintSshConf(out *bytes.Buffer, bastion string, bastionPort string, bastionUser string, host string, hostPort string, hostUser string, command string) error {
+	// the output should be the bash array literal, (".." "..." ...)
+	var bEndpoint, hEndpoint string
+	if bastionUser == "" {
+		bEndpoint = fmt.Sprintf("%s", bastion)
+	} else {
+		bEndpoint = fmt.Sprintf("%s@%s", bastionUser, bastion)
+	}
+	if hostUser == "" {
+		hEndpoint = fmt.Sprintf("%s", host)
+	} else {
+		hEndpoint = fmt.Sprintf("%s@%s", hostUser, host)
+	}
+
+	out.WriteString("(")
+	out.WriteString("ssh ")
+
+	if os.Getenv("SSH_AUTH_SOCK") != "" {
+		out.WriteString("-A ")
+	}
+
+	out.WriteString("-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ")
+
+	if bastion != "" {
+		out.WriteString(fmt.Sprintf("-o \"ProxyCommand=ssh -p %s -q %s nc %%h %%p\" ", bastionPort, bEndpoint))
+	}
+
+	out.WriteString(fmt.Sprintf("-p %s ", hostPort))
+	out.WriteString(command)
+	out.WriteString(fmt.Sprintf(" \"%s\"", hEndpoint))
+	out.WriteString(")")
+
+	return nil
+}
+
+func (s *SshSession) PrintConf(job *SshJob, mode PrintConfMode) error {
 	buf := bytes.Buffer{}
 
-	buf.WriteString("cmdline=(")
+	buf.WriteString("cmdline=")
 
-	if mode == MODE_SSH {
-		buf.WriteString("ssh -A ")
-	} else {
-		buf.WriteString("scp ")
-	}
-	buf.WriteString("-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ")
+	var bastionHost, bastionPort, bastionUser, host, port, user string
 
 	if job.BastionConfig != nil {
 		toks := strings.Split(job.Bastion, ":")
@@ -387,33 +496,34 @@ func (s *SshSession) Print(job *SshJob, mode int) error {
 			return fmt.Errorf("cannot get host:port from %s", job.Bastion)
 		}
 
-		buf.WriteString(fmt.Sprintf("-o \"ProxyCommand=ssh -p %s -q %s@%s nc %%h %%p\" ", toks[1], job.BastionConfig.User, toks[0]))
+		bastionHost = toks[0]
+		bastionPort = toks[1]
+		bastionUser = job.BastionConfig.User
 	}
-
 	toks := strings.Split(job.Server, ":")
 	if len(toks) != 2 {
 		return fmt.Errorf("cannot get host:port from %s", job.Server)
 	}
+	host = toks[0]
+	port = toks[1]
+	user = job.ServerConfig.User
 
-	if mode == MODE_SSH {
-		buf.WriteString(fmt.Sprintf("-p %s ", toks[1]))
-		buf.WriteString(job.Command + " ")
-		buf.WriteString(fmt.Sprintf("\"%s@%s\"", job.ServerConfig.User, toks[0]))
-		buf.WriteString(")\n")
-	} else {
-		buf.WriteString(fmt.Sprintf("-P %s ", toks[1]))
-		buf.WriteString(job.Command + " ")
-
-		if regexpHost.FindStringIndex(buf.String()) != nil {
-			cmdline := regexpHost.ReplaceAllLiteralString(buf.String(), fmt.Sprintf(" %s@%s:", job.ServerConfig.User, toks[0]))
-			buf.Reset()
-			buf.WriteString(cmdline)
-		} else {
-			return fmt.Errorf("placeholder {} not found")
-		}
-		buf.WriteString(")\n")
+	var err error
+	switch mode {
+	case MODE_RSYNC:
+		err = PrintRsyncConf(&buf, bastionHost, bastionPort, bastionUser, host, port, user, job.Command)
+	case MODE_SCP:
+		err = PrintScpConf(&buf, bastionHost, bastionPort, bastionUser, host, port, user, job.Command)
+	case MODE_SSH:
+		err = PrintSshConf(&buf, bastionHost, bastionPort, bastionUser, host, port, user, job.Command)
+	default:
+		panic(fmt.Sprintf("unsupported mode=%s", mode))
+	}
+	if err != nil {
+		return err
 	}
 
+	buf.WriteString("\n")
 	buf.WriteString("\"${cmdline[@]}\"")
 
 	Debug.Printf("CMDLINE: %v", buf.String())

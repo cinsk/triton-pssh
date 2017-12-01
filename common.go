@@ -53,7 +53,7 @@ type TsshConfig struct {
 	ImageCacheExpiration    time.Duration
 	InstanceCacheExpiration time.Duration
 
-	Interactive int
+	PrintMode PrintConfMode
 }
 
 var Config TsshConfig = TsshConfig{

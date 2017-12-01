@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -64,4 +66,111 @@ func Test_SshSession_workers(env *testing.T) {
 		env.Errorf("number of workers(%d) does not match to the input to NewSshSession(%d)", s.nworkers, nworkers)
 	}
 	s.Close()
+}
+
+func TestSsh_ExpandPlaceholder(env *testing.T) {
+	repl, err := ExpandPlaceholder("   {}:tmp/the directory/", "host", "")
+
+	if err != nil {
+		env.Errorf("unexpected error: %v", err)
+	}
+
+	expected := "   \"host:tmp/the directory/\""
+	if repl != expected {
+		env.Errorf("expected |%v|, got |%v|", expected, repl)
+	}
+}
+
+func TestSsh_PrintScpConf_WithoutBastion(env *testing.T) {
+	out := bytes.Buffer{}
+
+	err := PrintScpConf(&out, "", "", "", "HOST", "PORT", "USER", "ADDITIONAL OPTIONS {}:THE DIR")
+	if err != nil {
+		env.Errorf("unexpected error: %v", err)
+	}
+
+	expected := `(scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P PORT ADDITIONAL OPTIONS "USER@HOST:THE DIR")`
+
+	if out.String() != expected {
+		env.Errorf("expected |%v|, got |%v|", expected, out.String())
+	}
+}
+
+func TestSsh_PrintScpConf_WithBastion(env *testing.T) {
+	out := bytes.Buffer{}
+
+	err := PrintScpConf(&out, "BHOST", "BPORT", "BUSER", "HOST", "PORT", "USER", "ADDITIONAL OPTIONS {}:THE DIR")
+	if err != nil {
+		env.Errorf("unexpected error: %v", err)
+	}
+
+	expected := `(scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o "ProxyCommand=ssh -p BPORT -q BUSER@BHOST nc %h %p" -P PORT ADDITIONAL OPTIONS "USER@HOST:THE DIR")`
+
+	if out.String() != expected {
+		env.Errorf("expected |%v|, got |%v|", expected, out.String())
+	}
+}
+
+func TestSsh_PrintRsyncConf_WithoutBastion(env *testing.T) {
+	os.Setenv("SSH_AUTH_SOCK", "TEST")
+	out := bytes.Buffer{}
+
+	err := PrintRsyncConf(&out, "", "", "", "HOST", "PORT", "USER", "ADDITIONAL OPTIONS {}:THE DIR")
+	if err != nil {
+		env.Errorf("unexpected error: %v", err)
+	}
+
+	expected := `(rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p PORT ADDITIONAL OPTIONS' "USER@HOST:THE DIR")`
+
+	if out.String() != expected {
+		env.Errorf("expected |%v|, got |%v|", expected, out.String())
+	}
+}
+
+func TestSsh_PrintRsyncConf_WithBastion(env *testing.T) {
+	os.Setenv("SSH_AUTH_SOCK", "TEST")
+	out := bytes.Buffer{}
+
+	err := PrintRsyncConf(&out, "BHOST", "BPORT", "BUSER", "HOST", "PORT", "USER", "ADDITIONAL OPTIONS {}:THE DIR")
+	if err != nil {
+		env.Errorf("unexpected error: %v", err)
+	}
+
+	expected := `(rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o "ProxyCommand=ssh -p BPORT -q BUSER@BHOST nc %h %p" -p PORT ADDITIONAL OPTIONS' "USER@HOST:THE DIR")`
+
+	if out.String() != expected {
+		env.Errorf("expected |%v|, got |%v|", expected, out.String())
+	}
+}
+
+func TestSsh_PrintSshConf_WithoutBastion(env *testing.T) {
+	os.Setenv("SSH_AUTH_SOCK", "TEST")
+	out := bytes.Buffer{}
+
+	err := PrintSshConf(&out, "", "", "", "HOST", "PORT", "USER", "-M -v")
+	if err != nil {
+		env.Errorf("unexpected error: %v", err)
+	}
+
+	expected := `(ssh -A -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p PORT -M -v "USER@HOST")`
+
+	if out.String() != expected {
+		env.Errorf("expected |%v|, got |%v|", expected, out.String())
+	}
+}
+
+func TestSsh_PrintSshConf_WithBastion(env *testing.T) {
+	os.Setenv("SSH_AUTH_SOCK", "TEST")
+	out := bytes.Buffer{}
+
+	err := PrintSshConf(&out, "BHOST", "BPORT", "BUSER", "HOST", "PORT", "USER", "-M -v")
+	if err != nil {
+		env.Errorf("unexpected error: %v", err)
+	}
+
+	expected := `(ssh -A -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o "ProxyCommand=ssh -p BPORT -q BUSER@BHOST nc %h %p" -p PORT -M -v "USER@HOST")`
+
+	if out.String() != expected {
+		env.Errorf("expected |%v|, got |%v|", expected, out.String())
+	}
 }

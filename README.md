@@ -236,7 +236,7 @@ If you want to pass `ssh(1)` options, append after `:::`, like this:
 
 # Utility: triton-scp.sh
 
-This is a `scp(1)` wrapper, automatically adds all scp options acquired from `triton-pssh`.  This is especially helpful if you want to copy one or more fils to the host which does not have public IP.
+This is a `scp(1)` wrapper, automatically adds all required `scp` options acquired from `triton-pssh`.  This is especially helpful if you want to copy one or more fils to the host which does not have public IP.
 
         Usage: triton-scp.sh INSTANCE-NAME ::: [SCP-OPTION...] SOURCE... {}:[DEST]
 
@@ -246,11 +246,21 @@ For example, if you want to copy file1, file2, and file3 to the directory `tmp/`
 
 The placeholder `{}` will be automatically replaced to the IP address of `my-private-instance`.
 
-You could also pass extra `scp(1)` options right after `:::`.  Below example passes `-v` option to the `scp(1)` program:
+You could also pass extra `scp(1)` options right after `:::`.  Below example passes `-r` option to the `scp(1)` program:
 
-        $ triton-scp -b my-bastion my-private-instance ::: -v file1 file2 file3 {}:
+        $ triton-scp -b my-bastion my-private-instance ::: -r file1 file2 file3 {}:
 
-One limitation. Due to the lack of parsing module, DEST should not contain whitespaces, and quoting is not supported.
+# Utility: triton-rsync.sh
+
+This is a `rsync(1)` wrapper, automatically adds required `rsync` options acquired from `triton-pssh`.  This is especially helpful if you want to copy one or more fils to the host which does not have public IP.
+
+        Usage: triton-scp.sh INSTANCE-NAME ::: [SCP-OPTION...] SOURCE... {}:[DEST]
+
+For example, if you want to transfer file1, file2, and file3 to the directory `tmp/`, in the remote host `my-private-instance` via Bastion server, `my-bastion`, using rsync options `-avz -C`, use following command-line:
+    
+        $ triton-rsync -b my-bastion my-private-instance ::: -avz -C file1 file2 file3 {}:/tmp
+
+The placeholder `{}` will be automatically replaced to the IP address of `my-private-instance`.
 
 # Emacs binding:
 

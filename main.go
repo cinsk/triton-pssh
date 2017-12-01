@@ -76,6 +76,7 @@ var Options = []OptionSpec{
 	{OPTION_NOCACHE, "no-cache", NO_ARGUMENT},
 	{'1', "ssh", NO_ARGUMENT},
 	{'2', "scp", NO_ARGUMENT},
+	{'3', "rsync", NO_ARGUMENT},
 }
 
 func init() {
@@ -222,9 +223,11 @@ func ParseOptions(args []string) []string {
 		case "no-cache":
 			Config.NoCache = true
 		case "ssh":
-			Config.Interactive = MODE_SSH
+			Config.PrintMode = MODE_SSH
 		case "scp":
-			Config.Interactive = MODE_SCP
+			Config.PrintMode = MODE_SCP
+		case "rsync":
+			Config.PrintMode = MODE_RSYNC
 		default:
 			Err(1, err, "unrecognized option -- %s", opt.LongOption)
 		}
@@ -263,7 +266,7 @@ func TritonClientConfig(config *TsshConfig) *triton.ClientConfig {
 }
 
 func SplitArgs(args []string) (string, string) {
-	if Config.Interactive == MODE_PSSH && len(args) < 2 {
+	if Config.PrintMode == MODE_PSSH && len(args) < 2 {
 		Err(0, nil, "wrong number of argument(s)")
 		Err(1, nil, "Try with --help for more")
 	}
@@ -292,7 +295,7 @@ func SplitArgs(args []string) (string, string) {
 		p = "true"
 	}
 
-	if Config.Interactive == MODE_PSSH && c == "" {
+	if Config.PrintMode == MODE_PSSH && c == "" {
 		Err(0, nil, "no command specified")
 		Err(1, nil, "you might miss to use ::: delimiter")
 	}
@@ -479,8 +482,8 @@ func main() {
 			continue
 		}
 
-		if Config.Interactive != MODE_PSSH {
-			err := SSH.Print(job, Config.Interactive)
+		if Config.PrintMode != MODE_PSSH {
+			err := SSH.PrintConf(job, Config.PrintMode)
 			if err != nil {
 				Err(1, err, "failed to build the command-line")
 			}
