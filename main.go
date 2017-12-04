@@ -272,14 +272,14 @@ func TritonClientConfig(config *TsshConfig) *triton.ClientConfig {
 	return &c
 }
 
-func SplitArgs(args []string) (string, string) {
+func SplitArgs(args []string) (string, []string) {
 	if Config.PrintMode == MODE_PSSH && len(args) < 2 {
 		Err(0, nil, "wrong number of argument(s)")
 		Err(1, nil, "Try with --help for more")
 	}
 
-	var patbuf bytes.Buffer
-	var cmdbuf bytes.Buffer
+	var exprbuf bytes.Buffer
+	var commands []string
 
 	var i int
 	for i = 0; i < len(args); i++ {
@@ -287,27 +287,24 @@ func SplitArgs(args []string) (string, string) {
 			i++
 			break
 		}
-		patbuf.WriteString(args[i])
-		patbuf.WriteString(" ")
+		exprbuf.WriteString(args[i])
+		exprbuf.WriteString(" ")
 	}
 	for ; i < len(args); i++ {
-		cmdbuf.WriteString(args[i])
-		cmdbuf.WriteString(" ")
+		commands = append(commands, args[i])
 	}
 
-	p := strings.Trim(patbuf.String(), " \t\v\n\r")
-	c := strings.Trim(cmdbuf.String(), " \t\v\n\r")
-
+	p := strings.Trim(exprbuf.String(), " \t\v\n\r")
 	if p == "" {
 		p = "true"
 	}
 
-	if Config.PrintMode == MODE_PSSH && c == "" {
+	if Config.PrintMode == MODE_PSSH && len(commands) == 0 {
 		Err(0, nil, "no command specified")
 		Err(1, nil, "you might miss to use ::: delimiter")
 	}
 
-	return p, c
+	return p, commands
 }
 
 func StdinFile() (*os.File, error) {

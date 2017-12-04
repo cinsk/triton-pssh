@@ -8,12 +8,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/joyent/triton-go/compute"
+	shellquote "github.com/kballard/go-shellquote"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -26,8 +26,6 @@ const (
 	MODE_SCP
 	MODE_RSYNC
 )
-
-var regexpHost = regexp.MustCompile("([ \t]*)\\{\\}(.*)$")
 
 type SshJob struct {
 	ServerConfig  *ssh.ClientConfig
@@ -43,7 +41,7 @@ type SshJob struct {
 
 	Input io.ReadCloser
 
-	Command string
+	Command []string
 
 	Result chan SshResult
 }
@@ -87,7 +85,7 @@ func NewSshSession(config *TsshConfig, nworkers int) *SshSession {
 	return &session
 }
 
-func (s *SshSession) BuildJob(instance *compute.Instance, auths []ssh.AuthMethod, command string, stdin *os.File) (*SshJob, error) {
+func (s *SshSession) BuildJob(instance *compute.Instance, auths []ssh.AuthMethod, command []string, stdin *os.File) (*SshJob, error) {
 	user := s.config.User
 	if user == "" {
 		img, _ := ImgCache.Get(instance.Image)
@@ -356,7 +354,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 		}
 	}
 
-	command := job.Command
+	command := shellquote.Join(job.Command...)
 	if !s.config.InlineStdoutOnly {
 		command = fmt.Sprintf("exec 2>&1; %s", command)
 	}
@@ -372,16 +370,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 	return result
 }
 
-func ExpandPlaceholder(command string, repl string) (string, error) {
-	if regexpHost.FindStringIndex(command) == nil {
-		return "", fmt.Errorf("placeholder {} not found")
-	}
-
-	replaced := regexpHost.ReplaceAllString(command, fmt.Sprintf("$1\"%v$2\"", repl))
-	return replaced, nil
-}
-
-func PrintScpConf(out *bytes.Buffer, bastion string, bastionPort string, bastionUser string, host string, hostPort string, hostUser string, command string) error {
+func PrintScpConf(out *bytes.Buffer, bastion string, bastionPort string, bastionUser string, host string, hostPort string, hostUser string, command []string) error {
 	// the output should be the bash array literal, (".." "..." ...)
 	var bEndpoint, hEndpoint string
 	if bastionUser == "" {
@@ -415,7 +404,7 @@ func PrintScpConf(out *bytes.Buffer, bastion string, bastionPort string, bastion
 	return nil
 }
 
-func PrintRsyncConf(out *bytes.Buffer, bastion string, bastionPort string, bastionUser string, host string, hostPort string, hostUser string, command string) error {
+func PrintRsyncConf(out *bytes.Buffer, bastion string, bastionPort string, bastionUser string, host string, hostPort string, hostUser string, command []string) error {
 	// the output should be the bash array literal, (".." "..." ...)
 	var bEndpoint, hEndpoint string
 	if bastionUser == "" {
@@ -448,7 +437,7 @@ func PrintRsyncConf(out *bytes.Buffer, bastion string, bastionPort string, basti
 	return nil
 }
 
-func PrintSshConf(out *bytes.Buffer, bastion string, bastionPort string, bastionUser string, host string, hostPort string, hostUser string, command string) error {
+func PrintSshConf(out *bytes.Buffer, bastion string, bastionPort string, bastionUser string, host string, hostPort string, hostUser string, command []string) error {
 	// the output should be the bash array literal, (".." "..." ...)
 	var bEndpoint, hEndpoint string
 	if bastionUser == "" {
@@ -476,7 +465,7 @@ func PrintSshConf(out *bytes.Buffer, bastion string, bastionPort string, bastion
 	}
 
 	out.WriteString(fmt.Sprintf("-p %s ", hostPort))
-	out.WriteString(command)
+	out.WriteString(shellquote.Join(command...))
 	out.WriteString(fmt.Sprintf(" \"%s\"", hEndpoint))
 	out.WriteString(")")
 

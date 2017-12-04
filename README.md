@@ -286,4 +286,4 @@ MPL 2.0
 Thanks to the packages that this project depends on.
 
 * Govaluate - https://github.com/Knetic/govaluate
-
+* ShellQuote - https://github.com/kballard/go-shellquote
