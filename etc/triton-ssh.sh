@@ -4,8 +4,8 @@ PROGRAM_NAME=$(basename "$0")
 
 if [ "$#" -eq 0 ]; then
     cat <<EOF
-Usage: $PROGRAM_NAME FILTER-EXPRESSION
-       $PROGRAM_NAME FILTER-EXPRESSION ::: SSH-OPTION...
+Usage: $PROGRAM_NAME -h HOST [::: SSH-OPTION...]
+       $PROGRAM_NAME FILTER-EXPRESSION [::: SSH-OPTION...]
 
 FILTER-EXPRESSION is explained in http://github.com/cinsk/triton-pssh/README.md
 

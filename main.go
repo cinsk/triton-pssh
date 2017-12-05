@@ -67,6 +67,7 @@ var Options = []OptionSpec{
 	{'t', "deadline", ARGUMENT_REQUIRED},
 	{'p', "parallel", ARGUMENT_REQUIRED},
 	{'i', "inline", NO_ARGUMENT},
+	{'h', "host", ARGUMENT_REQUIRED},
 	{OPTION_INLINE_STDOUT, "inline-stdout", NO_ARGUMENT},
 	{'o', "outdir", ARGUMENT_REQUIRED},
 	{'e', "errdir", ARGUMENT_REQUIRED},
@@ -175,6 +176,9 @@ func ParseOptions(args []string) []string {
 			} else {
 				Err(1, err, "cannot convert %s to numeric value", opt.Argument)
 			}
+		case "host":
+			Config.ServerNames = append(Config.ServerNames, fmt.Sprintf("name == \"%s\"", opt.Argument))
+
 		case "bastion":
 			user, host, port, err := ParseUserHostPort(opt.Argument)
 			if err != nil {
@@ -295,8 +299,19 @@ func SplitArgs(args []string) (string, []string) {
 	}
 
 	p := strings.Trim(exprbuf.String(), " \t\v\n\r")
+
+	if len(Config.ServerNames) > 0 {
+		expr := strings.Join(Config.ServerNames, "||")
+
+		if p == "" {
+			p = expr
+		} else {
+			p = fmt.Sprintf("%s || ( %s )", expr, p)
+		}
+	}
+
 	if p == "" {
-		p = "true"
+		Err(1, nil, "no expression specified")
 	}
 
 	if Config.PrintMode == MODE_PSSH && len(commands) == 0 {
@@ -467,8 +482,7 @@ func main() {
 
 		result, error := Evaluate(instance, img, expr)
 		if error != nil {
-			Warn.Printf("warning: expr evaluation failed: %s", error)
-			continue
+			Err(1, error, "evaluation failed")
 		}
 		if r := bool(result); !r {
 			Debug.Printf("INSTANCE[%v]: skipped \n", instance.Name)

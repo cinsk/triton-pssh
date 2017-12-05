@@ -4,7 +4,8 @@ PROGRAM_NAME=$(basename "$0")
 
 if [ "$#" -lt 4 ]; then
     cat <<EOF
-Usage: $PROGRAM_NAME FILTER-EXPRESSION ::: [SSH-OPTION...] FILE... DEST
+Usage: $PROGRAM_NAME -h HOST ::: [SCP-OPTION...] FILE... DEST
+Usage: $PROGRAM_NAME FILTER-EXPRESSION ::: [SCP-OPTION...] FILE... DEST
 
 FILTER-EXPRESSION is explained in http://github.com/cinsk/triton-pssh/README.md
 

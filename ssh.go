@@ -465,8 +465,23 @@ func PrintSshConf(out *bytes.Buffer, bastion string, bastionPort string, bastion
 	}
 
 	out.WriteString(fmt.Sprintf("-p %s ", hostPort))
-	out.WriteString(shellquote.Join(command...))
-	out.WriteString(fmt.Sprintf(" \"%s\"", hEndpoint))
+
+	delim := len(command)
+	for i, word := range command {
+		if word == "--" {
+			delim = i + 1
+			break
+		}
+		out.WriteString(shellquote.Join(word) + " ")
+	}
+	out.WriteString(fmt.Sprintf("\"%s\" ", hEndpoint))
+
+	if delim < len(command) {
+		for _, word := range command[delim:] {
+			out.WriteString(shellquote.Join(word) + " ")
+		}
+	}
+
 	out.WriteString(")")
 
 	return nil

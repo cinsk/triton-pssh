@@ -165,16 +165,22 @@ To find any instance that uses Joyent SmartOS or LX brand:
 
         $ triton-pssh 'brand == "joyent" || brand == "lx"' ::: command...
 
-### Experimental shortcut
+## Specify machines directly instead of Expression
 
-Note that any feature in this section may be removed if the implementation of the expression evaluator changes.
+You could specify the name of the Triton machine directly with `-h HOSTNAME` option.   This option can be used multiple times.  For example:
 
-If the expression is just one word, not a string, and neither  `true` or `false`, and an identifier which is not a parameter name above, then it will considered as a name of the instance.   For example, following two command lines are identical:
+        # Select machine 'foo', and run uptime on each host
+        $ triton-pssh -i -h foo ::: uptime
+        
+        # Select machine 'foo' and 'bar', and run uptime on each host
+        $ triton-pssh -i -h foo -h bar ::: uptime
 
-        $ triton-pssh --no-cache 'name == "foo"' ::: uptime
-        $ triton-pssh --no-cache name ::: uptime
+Or, you can mix `-h HOSTNAME` with an expression.  In this case, all conditions are merged with logical or:
 
-
+        $ triton-pssh -i -h foo -h bar 'brand == "joyent"' ::: uptime
+        # Above command-line is identical to below one:
+        $ triton-pssh -i 'name == "foo" || name == "bar" || brand == "joyent"' ::: uptime
+        
 
 ## Authentication
 
@@ -221,47 +227,60 @@ FYI, `triton` command line tool gives you to connect a Triton instance via
 
 Currently, it only allows you to connect a Triton instance if and only if the instance has a public IP address.
 
-This package provides `etc/triton-ssh.sh` which allows you to use ssh(1) client to connect a Triton instance interactively.
+This package provides `etc/triton-ssh.sh` which allows you to use `ssh(1)` client to connect a Triton instance interactively.
 
 You can use the same expression syntax that you'd use with `triton-pssh` in `triton-ssh.sh`:
 
-        $ triton-ssh.sh my-instance      # connect the instance with the name, "my-instance"
+        $ triton-ssh.sh -h my-instance              # connect the instance with the name, "my-instance"
         $ triton-ssh.sh -b bastion 'name == "foo"'  # connect the instance, "foo" through the Bastion, "bastion"
 
 If the expression matches to more than one instance, `triton-ssh.sh` will just connect the first machine it matches.
 
 If you want to pass `ssh(1)` options, append after `:::`, like this:
 
-        $ triton-ssh.sh -b bastion my-private-instance ::: -M -v
+        $ triton-ssh.sh -b bastion -h my-private-instance ::: -M -v
 
+If you just want to run a simple command and return to the shell, provide a command delimited by `--`:
+
+        $ triton-ssh.sh -b bastion -h my-private-instance ::: -M -v -- uptime
+
+Note that this utility uses `ssh(1)` internally, so `nc(1)` must be available in Bastion server.
 
 ## Utility: triton-scp.sh
 
 This is a `scp(1)` wrapper, automatically adds all required `scp` options acquired from `triton-pssh`.  This is especially helpful if you want to copy one or more fils to the host which does not have public IP.
 
-        Usage: triton-scp.sh INSTANCE-NAME ::: [SCP-OPTION...] SOURCE... {}:[DEST]
+        Usage: triton-scp.sh -h INSTANCE-NAME ::: [SCP-OPTION...] SOURCE... DEST
 
 For example, if you want to copy file1, file2, and file3 to the directory `tmp/`, in the remote host `my-private-instance` via Bastion server, `my-bastion`, use following command-line:
     
-        $ triton-scp -b my-bastion my-private-instance ::: file1 file2 file3 {}:/tmp
+        $ triton-scp -b my-bastion -h my-private-instance ::: file1 file2 file3 {}:/tmp
 
 The placeholder `{}` will be automatically replaced to the IP address of `my-private-instance`.
 
 You could also pass extra `scp(1)` options right after `:::`.  Below example passes `-r` option to the `scp(1)` program:
 
-        $ triton-scp -b my-bastion my-private-instance ::: -r file1 file2 file3 {}:
+        $ triton-scp -b my-bastion -h my-private-instance ::: -r file1 file2 file3 {}:
+
+If the machine was newly created or replaced, you might also want to add `--no-cache` option to update internal cache.
+
+Note that this utility uses `ssh(1)` internally, so `nc(1)` must be available in Bastion server.
 
 ## Utility: triton-rsync.sh
 
 This is a `rsync(1)` wrapper, automatically adds required `rsync` options acquired from `triton-pssh`.  This is especially helpful if you want to copy one or more fils to the host which does not have public IP.
 
-        Usage: triton-scp.sh INSTANCE-NAME ::: [SCP-OPTION...] SOURCE... {}:[DEST]
+        Usage: triton-rsync.sh -h INSTANCE-NAME ::: [SCP-OPTION...] SOURCE... DEST
 
 For example, if you want to transfer file1, file2, and file3 to the directory `tmp/`, in the remote host `my-private-instance` via Bastion server, `my-bastion`, using rsync options `-avz -C`, use following command-line:
     
-        $ triton-rsync -b my-bastion my-private-instance ::: -avz -C file1 file2 file3 {}:/tmp
+        $ triton-rsync -b my-bastion -h my-private-instance ::: -avz -C file1 file2 file3 {}:/tmp
 
 The placeholder `{}` will be automatically replaced to the IP address of `my-private-instance`.
+
+If the machine was newly created or replaced, you might also want to add `--no-cache` option to update internal cache.
+
+Note that this utility uses `ssh(1)` internally, so `nc(1)` must be available in Bastion server.
 
 ## Emacs binding:
 
@@ -275,6 +294,16 @@ Add following to your `$HOME/.emacs` to register it.
                             "/src/github.com/cinsk/triton-pssh/emacs/triton-ssh.el"))
 (require 'triton-ssh)
 ```
+
+* `M-x triton-ssh` to connect a Triton machine.
+* `C-u M-x triton-ssh` same as above, except it will allow you to choose the current Triton profile.
+
+The major mode of `M-x triton-ssh` is `term-mode`, which uses character mode by default.  This means most `C-x` or `M-x` shortcuts not working as expected since the keystrokes will be directly passed to the shell.  Here are some brief keybindings of `term-mode`:
+
+* `C-c` the prefix key.  Use this key instead of `C-x`
+* `C-c M-x` behaves as `M-x`.
+* `C-c C-j` switch to line mode.  You can get `shell-mode` like behavior with line mode.
+* `C-c C-k` switch back to character mode.
 
 
 # License

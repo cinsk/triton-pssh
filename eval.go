@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/Knetic/govaluate"
 	"github.com/joyent/triton-go/compute"
@@ -140,14 +139,6 @@ func buildContext(instance *compute.Instance, image *compute.Image) map[string]i
 
 func Evaluate(instance *compute.Instance, image *compute.Image, expression string) (bool, error) {
 	context := buildContext(instance, image)
-
-	{
-		tokens := strings.Fields(expression)
-
-		if len(tokens) == 1 && tokens[0] != "true" && tokens[0] != "false" && tokens[0][0] != '"' {
-			expression = fmt.Sprintf("name == \"%s\"", tokens[0])
-		}
-	}
 
 	ev, err := govaluate.NewEvaluableExpressionWithFunctions(expression, UserFunctions)
 

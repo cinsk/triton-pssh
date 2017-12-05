@@ -25,6 +25,8 @@ type TsshConfig struct {
 	User       string
 	ServerPort int
 
+	ServerNames []string // each element has the form 'name == "machine name"'
+
 	BastionUser    string
 	BastionName    string // Triton instance name
 	BastionPort    int
@@ -89,7 +91,7 @@ var NetworkQueryMaxTries = 2
 var ImgCache *ImageCache
 var NetCache *NetworkCache
 
-const VERSION_STRING = "1.0.1"
+const VERSION_STRING = "1.0.2"
 const UNKNOWN_TRITON_PROFILE = "__unknown__"
 const TSSH_ROOT = ".triton-pssh"
 const (

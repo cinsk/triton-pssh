@@ -122,18 +122,19 @@ server bar, you provide \"-b bar foo\".
 "
   (interactive (list
                 (triton-ssh--current-profile current-prefix-arg)
-                (read-from-minibuffer "triton-ssh (e.g. [-b bastion] hostname): "
+                (read-from-minibuffer "triton-ssh command line (e.g. [-b bastion] -h hostname): "
                                       nil nil nil 'triton-ssh-history)))
   (let ((cmdlines (format "eval \"$(triton env %s)\"; %s %s"
                           profile triton-ssh-program triton-ssh-arguments))
-        (bufname (format "ssh-%s"
+        (bufname (format "ssh:%s"
                          (triton-ssh--buffer-name triton-ssh-arguments))))
     (let ((buf (make-term bufname "/bin/bash" nil "-c" cmdlines)))
       (with-current-buffer buf
         (term-mode)
         (term-char-mode)
         (goto-char (point-max)))
-      (switch-to-buffer buf))))
+      (switch-to-buffer buf)))
+  (message "Prefix command is 'C-c'.  C-c C-j for line mode, C-c C-k for char mode."))
 
 
 (provide 'triton-ssh)
