@@ -2,8 +2,8 @@ package main
 
 import (
 	"os"
-	"syscall"
-	"unsafe"
+
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 type winsize struct {
@@ -17,13 +17,12 @@ const LINES = 24
 const COL = 80
 
 func TerminalSize() (int, int) {
-	ws := winsize{}
-
-	ret, _, _ := syscall.Syscall(syscall.SYS_IOCTL, uintptr(syscall.Stdin), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
-	if int(ret) == -1 {
+	w, h, err := terminal.GetSize(1)
+	if err != nil {
+		Debug.Printf("cannot determine the terminal size, use default (%vx%v): %s", COL, LINES, err)
 		return COL, LINES
 	} else {
-		return int(ws.Col), int(ws.Row)
+		return w, h
 	}
 }
 
