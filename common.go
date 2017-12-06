@@ -112,11 +112,6 @@ func init() {
 	HomeDirectory = UserHomeDirectory()
 	TsshRoot = filepath.Join(HomeDirectory, TSSH_ROOT)
 	TritonProfileName = os.Getenv("TRITON_PROFILE")
-
-	if TritonProfileName == "" {
-		Err(1, nil, "cannot determine Triton Profile from TRITON_PROFILE env")
-	}
-
 	Config.Auth.AddDefaults()
 }
 

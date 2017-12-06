@@ -372,6 +372,10 @@ func IsDockerContainer(instance *compute.Instance) bool {
 }
 
 func main() {
+	if TritonProfileName == "" {
+		Err(1, nil, "cannot determine Triton Profile from TRITON_PROFILE env")
+	}
+
 	Debug.Printf("Os.Args: %v\n", os.Args)
 	args := ParseOptions(append(OptionsFromInitFile(), os.Args[1:]...))
 	Debug.Printf("Config: %v", Config)
