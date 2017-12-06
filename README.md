@@ -45,7 +45,7 @@ First, select a machine named `gong`, and let's run `uptime` on it:
         $ triton-pssh 'name == "gong"' ::: uptime
         [1] 15:38:21 [SUCCESS] 6cc24b15-1df7-4492-f893-92fe3aff91b0 root@gong
 
-You'll see the output that `uptime` successful on the machine where the id is `6cc24b15-1df7-4492-f893-92fe3aff91b0`.  However, it only shows that the command `uptime` was successful, without the actual output of the command.   Currently, there are two ways to get the output of the command.  With `-i` option, all standard output will be aggregated and report back to you:
+You'll see the output that `uptime` successful on the machine where the id is `6cc24b15-1df7-4492-f893-92fe3aff91b0`.  However, it only shows that the command `uptime` was successful, without the actual output of the command.   Currently, there are two ways to get the output of the command.  With `-i` option, all standard output and standard error will be aggregated and report back to you:
 
         $ triton-pssh -i 'name == "gong"' ::: uptime
         [1] 18:48:47 [SUCCESS] 6cc24b15-1df7-4492-f893-92fe3aff91b0 root@gong
@@ -184,11 +184,28 @@ Or, you can mix `-h HOSTNAME` with an expression.  In this case, all conditions 
 
 ## Authentication
 
-`triton-pssh` will use the ssh-agent if the environment variable `SSH_AUTH_SOCK` exists.  Also, it will read your private key for the PublicKey authentication if `$HOME/.ssh/id_rsa` exists.
+### Authentication for Triton API
 
-Use `-i KEYFILE` to provide additional private key file for public key authentication.
+* You must have active Triton profile -- Running `eval "$(triton env your-profile)"` will do 
+* You must provide the location of private key file via one of three ways here:
+  * by setting `SDC_KEY_FILE` environment to the pathname of the private key (e.g. `export SDC_KEY_FILE=~/.ssh/id_rsa`)
+  * by providing the pathname via `-K keyfile` option (e.g. `triton-pssh -K ~/.ssh_id_rsa ...`)
+  * by providing the private key using `ssh-agent(1)`
+    1. Run `ssh-add -l` to check whether the agent is running.
+    2. If not, run `eval "$(ssh-agent)"`
+    3. Run `ssh-add ~/.ssh_id_rsa` to add your private key to the agent.
 
-Use `--password` to use password authentication.  However, you cannot provide extra input through a pipe to `triton-pssh` in this case.
+Using `ssh-agent(1)` is highly commended.
+
+### Authentication for SSH session
+
+* There are multiple ways to specifiy the authentication methods.
+  * By providing private key via `--identity=KEYFILE`.
+  * By instructing to use ssh-agent via `--agent` or `-A`.
+  * By instructing to ask password via `--password`.  Note you cannot use this, if you are using standard input to `triton-pssh`.
+  * If none of above provided, `triton-pssh` will try to use these keys in order: `~/.ssh/id_rsa`, `~/.ssh/id_dsa`, `~/.ssh/id_ecdsa`, and `~/.ssh/id_ed25519`.
+
+Using `ssh-agent(1)` is highly recommended.
 
 ## User name
 
@@ -314,5 +331,6 @@ MPL 2.0
 
 Thanks to the packages that this project depends on.
 
+* Triton GO SDK - https://github.com/joyent/triton-go
 * Govaluate - https://github.com/Knetic/govaluate
 * ShellQuote - https://github.com/kballard/go-shellquote

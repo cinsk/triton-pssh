@@ -1,16 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
-	"os/user"
-	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,6 +72,7 @@ var Options = []OptionSpec{
 	{'e', "errdir", ARGUMENT_REQUIRED},
 	{OPTION_DEFAULT_USER, "default-user", ARGUMENT_REQUIRED},
 	{OPTION_PASSWORD, "password", NO_ARGUMENT},
+	{'A', "agent", NO_ARGUMENT},
 	{'I', "identity", ARGUMENT_REQUIRED},
 	{'d', "dryrun", NO_ARGUMENT},
 	{OPTION_NOCACHE, "no-cache", NO_ARGUMENT},
@@ -105,8 +102,6 @@ Option:
 
       --no-cache           read all information directly from Triton Cloud API
 
-  -p, --password           Ask for a password
-
       --default-user=USER  Use USER if the default user cannot be determined
 
   -k, --keyid=ID           the fingerprint of the SSH key for Triton Cloud API
@@ -115,6 +110,11 @@ Option:
                              override the value of SDC_KEY_FILE.
       --url=URL            the base endpoint for the Triton Cloud API, this
                              will override the value of SDC_URL.
+
+  -I, --identity=KEYFILE   select a private key for public key authentication
+                             for SSH session
+  -A, --agent              use SSH agent for the authentication for SSH session
+      --password           use password authentication for SSH session
 
   -u, --user=USER          the username of the remote hosts
   -P, --port=PORT          the SSH port of the remote hosts
@@ -126,7 +126,6 @@ Option:
   -t, --deadline=TIMEOUT   the timeout of the SSH session
 
   -p, --parallel=MAXPROC   the max number of SSH connection at a time
-  -I, --identity=KEYFILE
 
       --help               display this help and exit
       --version            output version information and exit
@@ -167,10 +166,20 @@ func ParseOptions(args []string) []string {
 		case "keyid":
 			Config.KeyId = opt.Argument
 		case "keyfile":
-			Config.KeyPath = opt.Argument
+			Config.KeyPath = ExpandPath(opt.Argument)
 
 		case "identity":
-			Config.KeyFiles = append(Config.KeyFiles, opt.Argument)
+			if err := Config.Auth.AddPrivateKey(ExpandPath(opt.Argument)); err != nil {
+				Err(1, err, "cannot add publicKey authentication")
+			}
+		case "agent":
+			if err := Config.Auth.AddAgent(); err != nil {
+				Err(1, err, "cannot add SSH agent authentication")
+			}
+		case "password":
+			if err := Config.Auth.AddPassword(); err != nil {
+				Err(1, err, "cannot add password authentication")
+			}
 		case "user":
 			Config.User = opt.Argument
 		case "port":
@@ -222,19 +231,19 @@ func ParseOptions(args []string) []string {
 			Config.InlineOutput = true
 			Config.InlineStdoutOnly = true
 		case "outdir":
-			if err := CheckOutputDirectory(opt.Argument, true); err != nil {
+			dir := ExpandPath(opt.Argument)
+			if err := CheckOutputDirectory(dir, true); err != nil {
 				Err(1, err, "invalid argument")
 			}
-			Config.OutDirectory = opt.Argument
+			Config.OutDirectory = dir
 		case "errdir":
-			if err := CheckOutputDirectory(opt.Argument, true); err != nil {
+			dir := ExpandPath(opt.Argument)
+			if err := CheckOutputDirectory(dir, true); err != nil {
 				Err(1, err, "invalid argument")
 			}
-			Config.ErrDirectory = opt.Argument
+			Config.ErrDirectory = dir
 		case "default-user":
 			Config.DefaultUser = opt.Argument
-		case "password":
-			Config.AskPassword = true
 		case "no-cache":
 			Config.NoCache = true
 		case "ssh":
@@ -249,11 +258,6 @@ func ParseOptions(args []string) []string {
 			Err(1, err, "unrecognized option -- %s", opt.LongOption)
 		}
 	}
-
-	Config.KeyFiles = append(Config.KeyFiles, filepath.Join(HomeDirectory, ".ssh", "id_rsa"))
-	Config.KeyFiles = append(Config.KeyFiles, filepath.Join(HomeDirectory, ".ssh", "id_dsa"))
-	Config.KeyFiles = append(Config.KeyFiles, filepath.Join(HomeDirectory, ".ssh", "id_ecdsa"))
-	Config.KeyFiles = append(Config.KeyFiles, filepath.Join(HomeDirectory, ".ssh", "id_ed25519"))
 
 	if Config.InlineOutput && (Config.OutDirectory != "" || Config.ErrDirectory != "") {
 		Err(1, nil, "inline output(-i,--inline) cannot be used with (-o,--outdir,-e,--errdir)")
@@ -347,61 +351,6 @@ func StdinFile() (*os.File, error) {
 	return input, nil
 }
 
-func PasswordAuth() ssh.AuthMethod {
-	Config.askOnce.Do(func() {
-		if !Config.AskPassword {
-			return
-		}
-
-		if !terminal.IsTerminal(int(syscall.Stdin)) {
-			Err(1, nil, "stdin is not a terminal, required by password authentication")
-		}
-
-		fmt.Fprintf(os.Stderr, "password: ")
-		password, err := terminal.ReadPassword(int(syscall.Stdin))
-		fmt.Fprintf(os.Stderr, "\n")
-		if err != nil {
-			Err(1, err, "cannot read password")
-		}
-		Config.passwordAuth = ssh.Password(string(password))
-	})
-	return Config.passwordAuth
-}
-
-func AuthMethods() []ssh.AuthMethod {
-	methods := make([]ssh.AuthMethod, 0)
-
-	if auth := PasswordAuth(); auth != nil {
-		Debug.Printf("AUTH: adding password agent")
-		methods = append(methods, auth)
-	}
-
-	if auth := AgentAuth(); auth != nil {
-		Debug.Printf("AUTH: adding ssh agent")
-		methods = append(methods, auth)
-	}
-
-	for _, kfile := range Config.KeyFiles {
-		auth, err := PublicKeyAuth(kfile)
-
-		if err != nil {
-			Warn.Printf("warning: %s", kfile, err)
-		}
-
-		// auth can be nil, which should be ignored.
-		if auth != nil {
-			Debug.Printf("AUTH: adding publickey agent: %s", kfile)
-			methods = append(methods, auth)
-		}
-	}
-
-	for i, j := 0, len(methods)-1; i < j; i, j = i+1, j-1 {
-		methods[i], methods[j] = methods[j], methods[i]
-	}
-
-	return methods
-}
-
 func IsDockerContainer(instance *compute.Instance) bool {
 	val, ok := instance.Tags["sdc_docker"]
 	if !ok {
@@ -420,40 +369,6 @@ func IsDockerContainer(instance *compute.Instance) bool {
 	default:
 		return false
 	}
-}
-
-func OptionsFromInitFile() []string {
-	u, err := user.Current()
-	if err != nil {
-		Err(0, err, "cannot get the current user")
-		return nil
-	}
-	initfile := path.Join(u.HomeDir, TSSH_ROOT, "triton-pssh.options")
-	file, err := os.Open(initfile)
-	Debug.Printf("ERROR INIT: %T", err)
-
-	if err != nil {
-		if os.IsNotExist(err) {
-			initContents := fmt.Sprintf(`# Generated at %s for triton-pssh vesrion %s
-# each non-empty line must contains exact one word
-`,
-				time.Now().Format(time.UnixDate), VERSION_STRING)
-			ioutil.WriteFile(initfile, []byte(initContents), 0600)
-		}
-		Warn.Printf("cannot open init file, %v", initfile)
-		return nil
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	var options []string
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if len(line) != 0 && line[0] != '#' {
-			options = append(options, line)
-		}
-	}
-	return options
 }
 
 func main() {
@@ -516,8 +431,6 @@ func main() {
 		defer inputFile.Close()
 	}
 
-	authMethods := AuthMethods()
-
 	jobWg := sync.WaitGroup{}
 	resultChannel := make(chan SshResult)
 	matched := 0
@@ -543,7 +456,7 @@ func main() {
 		// fmt.Printf("INSTANCE[%v]: hasPublicNet(%v)\n", instance.Name, hasPublicNet(instance))
 		// fmt.Printf("# %s [%v]:\n", instance.ID, instance.Name)
 
-		job, err := SSH.BuildJob(instance, authMethods, cmdline, inputFile)
+		job, err := SSH.BuildJob(instance, Config.Auth.Methods(), cmdline, inputFile)
 		if err != nil {
 			Warn.Printf("warning: cannot create SSH job: %s", err)
 			continue

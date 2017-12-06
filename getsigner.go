@@ -9,6 +9,7 @@ import (
 )
 
 func GetSigners(account string, keyId string, keyPath string) ([]authentication.Signer, error) {
+	Debug.Printf("GetSigner: account=%v, keyId=%v, keyPath=%v", account, keyId, keyPath)
 	signers := []authentication.Signer{}
 
 	if keyPath != "" {
@@ -27,7 +28,7 @@ func GetSigners(account string, keyId string, keyPath string) ([]authentication.
 
 	signer, err := authentication.NewSSHAgentSigner(keyId, account)
 	if err != nil {
-		Info.Printf("cannot get a signer from the ssh agent: %s", err)
+		Debug.Printf("cannot get a signer from the ssh agent: %s", err)
 	} else {
 		signers = append(signers, signer)
 	}
@@ -42,6 +43,7 @@ func GetSigners(account string, keyId string, keyPath string) ([]authentication.
 			if err != nil {
 				Info.Printf("cannot get a signer from %s: %s", keyId, err)
 			} else {
+				Debug.Printf("use %s as a Triton authentication", default_private_key)
 				signers = append(signers, signer)
 			}
 		}

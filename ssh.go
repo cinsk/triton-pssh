@@ -15,7 +15,6 @@ import (
 	"github.com/joyent/triton-go/compute"
 	shellquote "github.com/kballard/go-shellquote"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 )
 
 type PrintConfMode int
@@ -567,49 +566,6 @@ func (s *SshSession) sshClient(endpoint string, config *ssh.ClientConfig) (*ssh.
 	//defer client.Close()
 
 	return client, nil
-}
-
-func AgentAuth() ssh.AuthMethod {
-	authfile := os.Getenv("SSH_AUTH_SOCK")
-	if authfile == "" {
-		return nil
-	}
-
-	Debug.Printf("found SSH Agent: %s", authfile)
-
-	if sshAgent, err := net.Dial("unix", authfile); err == nil {
-		return ssh.PublicKeysCallback(agent.NewClient(sshAgent).Signers)
-	} else {
-		Warn.Printf("warning: fail to create agent client: %s", err)
-		return nil
-	}
-}
-
-func PublicKeyAuth(publicKeyFile string) (ssh.AuthMethod, error) {
-	stat, err := os.Stat(publicKeyFile)
-	if err == nil {
-		bits := stat.Mode().Perm() & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)
-		if int(bits) != 0 {
-			return nil, fmt.Errorf("wrong permission for the key file: %s", publicKeyFile)
-		}
-	} else {
-		if os.IsNotExist(err) {
-			return nil, nil
-		} else {
-			return nil, err
-		}
-	}
-
-	buffer, err := ioutil.ReadFile(publicKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("cannot read key file(%s): %s", publicKeyFile, err)
-	}
-
-	key, err := ssh.ParsePrivateKey(buffer)
-	if err != nil {
-		return nil, fmt.Errorf("cannot parse key file from %s: %s", publicKeyFile, err)
-	}
-	return ssh.PublicKeys(key), nil
 }
 
 /*

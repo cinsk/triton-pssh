@@ -48,7 +48,7 @@ type TsshConfig struct {
 	askOnce      sync.Once
 	passwordAuth ssh.AuthMethod
 
-	KeyFiles []string
+	Auth AuthMethods
 
 	NoCache                 bool
 	NetworkCacheExpiration  time.Duration
@@ -74,8 +74,6 @@ var Config TsshConfig = TsshConfig{
 	Parallelism: runtime.NumCPU(),
 	DefaultUser: "root",
 
-	KeyFiles: make([]string, 0),
-
 	NetworkCacheExpiration:  time.Duration(24*7) * time.Hour,
 	ImageCacheExpiration:    time.Duration(24*7) * time.Hour,
 	InstanceCacheExpiration: time.Duration(24) * time.Hour,
@@ -93,7 +91,7 @@ var NetworkQueryMaxTries = 2
 var ImgCache *ImageCache
 var NetCache *NetworkCache
 
-const VERSION_STRING = "1.0.3"
+const VERSION_STRING = "1.0.4"
 const UNKNOWN_TRITON_PROFILE = "__unknown__"
 const TSSH_ROOT = ".triton-pssh"
 const (
@@ -111,19 +109,34 @@ const (
 )
 
 func init() {
-	user, err := user.Current()
-	if err != nil {
-		Err(1, err, "cannot determine current user")
-	}
-
-	HomeDirectory = user.HomeDir
+	HomeDirectory = UserHomeDirectory()
 	TsshRoot = filepath.Join(HomeDirectory, TSSH_ROOT)
 	TritonProfileName = os.Getenv("TRITON_PROFILE")
 
 	if TritonProfileName == "" {
-		Err(1, err, "cannot determine Triton Profile")
+		Err(1, nil, "cannot determine Triton Profile from TRITON_PROFILE env")
 	}
 
+	Config.Auth.AddDefaults()
+}
+
+func UserHomeDirectory() string {
+	home := os.Getenv("HOME")
+	if home == "" {
+		usr, err := user.Current()
+		if err != nil {
+			Err(1, err, "cannot determine home directory")
+		}
+		return usr.HomeDir
+	}
+	return home
+}
+
+func ExpandPath(s string) string {
+	if len(s) >= 2 && s[0:2] == "~/" {
+		return filepath.Join(HomeDirectory, s[2:])
+	}
+	return s
 }
 
 func (config TsshConfig) String() string {
@@ -148,7 +161,7 @@ func (config TsshConfig) String() string {
 	buf.WriteString(fmt.Sprintf("DefaultUser=%s, ", config.DefaultUser))
 	buf.WriteString(fmt.Sprintf("AskPassword=%v, ", config.DefaultUser))
 	buf.WriteString(fmt.Sprintf("NoCache=%v, ", config.NoCache))
-	buf.WriteString(fmt.Sprintf("KeyFiles=%v", config.KeyFiles))
+	buf.WriteString(fmt.Sprintf("Auth=%v", config.Auth))
 
 	return buf.String()
 }
