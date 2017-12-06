@@ -77,6 +77,7 @@ var Options = []OptionSpec{
 	{OPTION_DEFAULT_USER, "default-user", ARGUMENT_REQUIRED},
 	{OPTION_PASSWORD, "password", NO_ARGUMENT},
 	{'I', "identity", ARGUMENT_REQUIRED},
+	{'d', "dryrun", NO_ARGUMENT},
 	{OPTION_NOCACHE, "no-cache", NO_ARGUMENT},
 	{'1', "ssh", NO_ARGUMENT},
 	{'2', "scp", NO_ARGUMENT},
@@ -242,6 +243,8 @@ func ParseOptions(args []string) []string {
 			Config.PrintMode = MODE_SCP
 		case "rsync":
 			Config.PrintMode = MODE_RSYNC
+		case "dryrun":
+			Config.DryRun = true
 		default:
 			Err(1, err, "unrecognized option -- %s", opt.LongOption)
 		}
@@ -545,6 +548,7 @@ func main() {
 			Warn.Printf("warning: cannot create SSH job: %s", err)
 			continue
 		}
+		job.DryRun = Config.DryRun
 
 		if Config.PrintMode != MODE_PSSH {
 			err := SSH.PrintConf(job, Config.PrintMode)

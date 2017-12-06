@@ -43,6 +43,7 @@ type SshJob struct {
 
 	Command []string
 
+	DryRun bool
 	Result chan SshResult
 }
 
@@ -166,6 +167,12 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 
 	if job.Input != nil {
 		defer job.Input.Close()
+	}
+
+	if job.DryRun {
+		return SshResult{Status: nil,
+			Time:   time.Now(),
+			Server: job.Server, InstanceID: job.InstanceID, InstanceName: job.InstanceName, User: job.ServerConfig.User}
 	}
 
 	if job.BastionConfig != nil {

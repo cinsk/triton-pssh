@@ -56,6 +56,8 @@ type TsshConfig struct {
 	InstanceCacheExpiration time.Duration
 
 	PrintMode PrintConfMode
+
+	DryRun bool
 }
 
 var Config TsshConfig = TsshConfig{
@@ -91,7 +93,7 @@ var NetworkQueryMaxTries = 2
 var ImgCache *ImageCache
 var NetCache *NetworkCache
 
-const VERSION_STRING = "1.0.2"
+const VERSION_STRING = "1.0.3"
 const UNKNOWN_TRITON_PROFILE = "__unknown__"
 const TSSH_ROOT = ".triton-pssh"
 const (
