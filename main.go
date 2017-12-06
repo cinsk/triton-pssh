@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
+	"os/user"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -408,9 +411,43 @@ func IsDockerContainer(instance *compute.Instance) bool {
 	}
 }
 
+func OptionsFromInitFile() []string {
+	u, err := user.Current()
+	if err != nil {
+		Err(0, err, "cannot get the current user")
+		return nil
+	}
+	initfile := path.Join(u.HomeDir, TSSH_ROOT, "triton-pssh.options")
+	file, err := os.Open(initfile)
+	Debug.Printf("ERROR INIT: %T", err)
+
+	if err != nil {
+		if os.IsNotExist(err) {
+			initContents := fmt.Sprintf(`# Generated at %s for triton-pssh vesrion %s
+# each non-empty line must contains exact one word
+`,
+				time.Now().Format(time.UnixDate), VERSION_STRING)
+			ioutil.WriteFile(initfile, []byte(initContents), 0600)
+		}
+		Warn.Printf("cannot open init file, %v", initfile)
+		return nil
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var options []string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if len(line) != 0 && line[0] != '#' {
+			options = append(options, line)
+		}
+	}
+	return options
+}
+
 func main() {
 	Debug.Printf("Os.Args: %v\n", os.Args)
-	args := ParseOptions(os.Args[1:])
+	args := ParseOptions(append(OptionsFromInitFile(), os.Args[1:]...))
 	Debug.Printf("Config: %v", Config)
 
 	expr, cmdline := SplitArgs(args)
