@@ -111,7 +111,7 @@ func (s *SshSession) BuildJob(instance *compute.Instance, auths []ssh.AuthMethod
 
 		job.BastionConfig = &ssh.ClientConfig{
 			User:            s.config.BastionUser,
-			Auth:            []ssh.AuthMethod{AgentAuth()},
+			Auth:            auths,
 			Timeout:         s.config.Timeout,
 			HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
 		}

@@ -368,10 +368,13 @@ func PasswordAuth() ssh.AuthMethod {
 func AuthMethods() []ssh.AuthMethod {
 	methods := make([]ssh.AuthMethod, 0)
 
-	if auth := AgentAuth(); auth != nil {
+	if auth := PasswordAuth(); auth != nil {
+		Debug.Printf("AUTH: adding password agent")
 		methods = append(methods, auth)
 	}
-	if auth := PasswordAuth(); auth != nil {
+
+	if auth := AgentAuth(); auth != nil {
+		Debug.Printf("AUTH: adding ssh agent")
 		methods = append(methods, auth)
 	}
 
@@ -384,8 +387,13 @@ func AuthMethods() []ssh.AuthMethod {
 
 		// auth can be nil, which should be ignored.
 		if auth != nil {
+			Debug.Printf("AUTH: adding publickey agent: %s", kfile)
 			methods = append(methods, auth)
 		}
+	}
+
+	for i, j := 0, len(methods)-1; i < j; i, j = i+1, j-1 {
+		methods[i], methods[j] = methods[j], methods[i]
 	}
 
 	return methods
@@ -505,6 +513,8 @@ func main() {
 		defer inputFile.Close()
 	}
 
+	authMethods := AuthMethods()
+
 	jobWg := sync.WaitGroup{}
 	resultChannel := make(chan SshResult)
 	matched := 0
@@ -530,8 +540,7 @@ func main() {
 		// fmt.Printf("INSTANCE[%v]: hasPublicNet(%v)\n", instance.Name, hasPublicNet(instance))
 		// fmt.Printf("# %s [%v]:\n", instance.ID, instance.Name)
 
-		auths := AuthMethods()
-		job, err := SSH.BuildJob(instance, auths, cmdline, inputFile)
+		job, err := SSH.BuildJob(instance, authMethods, cmdline, inputFile)
 		if err != nil {
 			Warn.Printf("warning: cannot create SSH job: %s", err)
 			continue
