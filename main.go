@@ -171,7 +171,7 @@ func ParseOptions(args []string) []string {
 			Config.User = opt.Argument
 		case "port":
 			i, err := strconv.Atoi(opt.Argument)
-			if err != nil {
+			if err == nil {
 				Config.ServerPort = i
 			} else {
 				Err(1, err, "cannot convert %s to numeric value", opt.Argument)
