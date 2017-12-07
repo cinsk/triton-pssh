@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/Knetic/govaluate"
+	l "github.com/cinsk/triton-pssh/log"
 	"github.com/joyent/triton-go/compute"
 )
 
@@ -151,7 +152,7 @@ func Evaluate(instance *compute.Instance, image *compute.Image, expression strin
 		return false, fmt.Errorf("evaulate error: %s", err)
 	}
 
-	Debug.Printf("EVAL RESULT: %v", result)
+	l.Debug("Evaluate(instance: %v, expression: '%v') => %v", instance.Name, expression, result)
 
 	if r, ok := result.(bool); !ok {
 		return false, fmt.Errorf("not boolean value: %v", result)

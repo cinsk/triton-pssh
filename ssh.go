@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	l "github.com/cinsk/triton-pssh/log"
 	"github.com/joyent/triton-go/compute"
 	shellquote "github.com/kballard/go-shellquote"
 	"golang.org/x/crypto/ssh"
@@ -145,19 +146,19 @@ func (s *SshSession) Close() {
 }
 
 func (s *SshSession) worker(wid int) {
-	Debug.Printf("SshWorker[%d] started...", wid)
+	l.Trace("SshWorker[%d] started...", wid)
 	defer s.workerGroup.Done()
 	defer func() { s.nworkers-- }()
 
 	for job := range s.input {
 		result := s.doSSH(job, wid)
-		Debug.Printf("SshWorker[%d] result.Status = %v", wid, result.Status)
+		l.Debug("SshWorker[%d] result.Status = %v", wid, result.Status)
 		go func(out chan SshResult, result SshResult) {
 			defer close(out)
 			out <- result
 		}(job.Result, result)
 	}
-	Debug.Printf("SshWorker[%d] finished", wid)
+	l.Trace("SshWorker[%d] finished", wid)
 }
 
 func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
@@ -175,7 +176,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 	}
 
 	if job.BastionConfig != nil {
-		Debug.Printf("SshWorker[%d].doSSH: creating ssh.Client for bastion %s", wid, job.Bastion)
+		l.Debug("SshWorker[%d].doSSH: creating ssh.Client for bastion %s", wid, job.Bastion)
 		client, err = s.sshClient(job.Bastion, job.BastionConfig)
 		if err != nil {
 			return SshResult{Status: err,
@@ -199,10 +200,10 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 				Time:   time.Now(),
 				Server: job.Server, InstanceID: job.InstanceID, InstanceName: job.InstanceName, User: job.ServerConfig.User}
 		}
-		Debug.Printf("SshWorker[%d].doSSH: creating ssh.Client for server %s through bastion %s", wid, job.Server, job.Bastion)
+		l.Debug("SshWorker[%d].doSSH: creating ssh.Client for server[%v] %s through bastion %s", wid, job.InstanceName, job.Server, job.Bastion)
 		client = ssh.NewClient(nc, chans, reqs)
 	} else {
-		Debug.Printf("SshWorker[%d].doSSH: creating ssh.Client for direct connect to %s", wid, job.Server)
+		l.Debug("SshWorker[%d].doSSH: creating ssh.Client for server[%v] %s", wid, job.InstanceName, job.Server)
 
 		client, err = s.sshClient(job.Server, job.ServerConfig)
 		if err != nil {
@@ -222,7 +223,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 
 	defer session.Close()
 	if job.Pty != nil {
-		Debug.Printf("SshWorker[%d].doSSH: allocating Pty: %v", wid, job.Pty)
+		l.Debug("SshWorker[%d].doSSH: allocating Pty: %v", wid, job.Pty)
 		modes := ssh.TerminalModes{
 			ssh.ECHO:          0,
 			ssh.TTY_OP_ISPEED: 14400,
@@ -257,7 +258,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 
 	var stdin io.WriteCloser
 	if job.Input != nil {
-		Debug.Printf("creating STDIN pipe, %v", job.Input)
+		l.Debug("creating STDIN pipe, %v", job.Input)
 		stdin, err = session.StdinPipe()
 		if err != nil {
 			return SshResult{Status: fmt.Errorf("ssh.Session.StdinPipe() failed: %s", err),
@@ -281,7 +282,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 			defer wg.Done()
 			//io.Copy(os.Stdout, stdout)
 			n, err := stdoutBuffer.ReadFrom(stdout)
-			Debug.Printf("SshWorker[%d].doSSH: copying stdout: %d bytes, err = %v", wid, n, err)
+			l.Debug("SshWorker[%d].doSSH: copying stdout: %d bytes, err = %v", wid, n, err)
 
 		}()
 		go func() {
@@ -289,7 +290,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 			//io.Copy(os.Stdout, stderr)
 
 			n, err := stderrBuffer.ReadFrom(stderr)
-			Debug.Printf("SshWorker[%d].doSSH: copying stderr: %d bytes, err = %v", wid, n, err)
+			l.Debug("SshWorker[%d].doSSH: copying stderr: %d bytes, err = %v", wid, n, err)
 		}()
 		if stdin != nil {
 			go func() {
@@ -299,7 +300,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 
 				nwritten, err := io.Copy(stdin, job.Input)
 
-				Debug.Printf("SshWorker[%d].doSSH: copying stdin: %d bytes, err = %v", wid, nwritten, err)
+				l.Debug("SshWorker[%d].doSSH: copying stdin: %d bytes, err = %v", wid, nwritten, err)
 			}()
 		}
 	} else {
@@ -311,7 +312,7 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 
 				nwritten, err := io.Copy(stdin, job.Input)
 
-				Debug.Printf("SshWorker[%d].doSSH: copying stdin: %d bytes, err = %v", wid, nwritten, err)
+				l.Debug("SshWorker[%d].doSSH: copying stdin: %d bytes, err = %v", wid, nwritten, err)
 			}()
 		}
 
@@ -327,13 +328,13 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 			go func() {
 				defer wg.Done()
 				n, err := io.Copy(out, stdout)
-				Debug.Printf("SshWorker[%d].doSSH: copying stdout: %d bytes, err = %v", wid, n, err)
+				l.Debug("SshWorker[%d].doSSH: copying stdout: %d bytes, err = %v", wid, n, err)
 			}()
 		} else {
 			go func() {
 				defer wg.Done()
 				n, err := io.Copy(ioutil.Discard, stdout)
-				Debug.Printf("SshWorker[%d].doSSH: discarding stdout: %d bytes, err = %v", wid, n, err)
+				l.Debug("SshWorker[%d].doSSH: discarding stdout: %d bytes, err = %v", wid, n, err)
 			}()
 		}
 
@@ -349,13 +350,13 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 			go func() {
 				defer wg.Done()
 				n, err := io.Copy(out, stderr)
-				Debug.Printf("SshWorker[%d].doSSH: copying stderr: %d bytes, err = %v", wid, n, err)
+				l.Debug("SshWorker[%d].doSSH: copying stderr: %d bytes, err = %v", wid, n, err)
 			}()
 		} else {
 			go func() {
 				defer wg.Done()
 				n, err := io.Copy(ioutil.Discard, stderr)
-				Debug.Printf("SshWorker[%d].doSSH: discarding stderr: %d bytes, err = %v", wid, n, err)
+				l.Debug("SshWorker[%d].doSSH: discarding stderr: %d bytes, err = %v", wid, n, err)
 			}()
 		}
 	}
@@ -365,9 +366,9 @@ func (s *SshSession) doSSH(job *SshJob, wid int) SshResult {
 		command = fmt.Sprintf("exec 2>&1; %s", command)
 	}
 
-	Debug.Printf("SshWorker[%d].doSSH: executing a command: %s", wid, command)
+	l.Debug("SshWorker[%d].doSSH: executing a command: %s", wid, command)
 	err = session.Run(command)
-	Debug.Printf("SshWorker[%d].doSSH: command result(err): %v", wid, err)
+	l.Debug("SshWorker[%d].doSSH: command result(err): %v", wid, err)
 	result.Time = time.Now()
 	result.Status = err
 
@@ -536,7 +537,7 @@ func (s *SshSession) PrintConf(job *SshJob, mode PrintConfMode) error {
 	buf.WriteString("\n")
 	buf.WriteString("\"${cmdline[@]}\"")
 
-	Debug.Printf("CMDLINE: %v", buf.String())
+	l.Debug("CMDLINE: %v", buf.String())
 	fmt.Println(buf.String())
 	return nil
 }
@@ -769,7 +770,7 @@ func ssh_main() {
 	go func() {
 		defer close(aggreg)
 		jobwg.Wait()
-		Debug.Printf("Waiting for getting all result..")
+		l.Debug("Waiting for getting all result..")
 	}()
 
 	for result := range aggreg {

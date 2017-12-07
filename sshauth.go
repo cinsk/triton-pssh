@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	l "github.com/cinsk/triton-pssh/log"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/terminal"
@@ -92,7 +93,7 @@ func (m *AuthMethods) AddAgent() error {
 		return fmt.Errorf("SSH_AUTH_SOCK not defined")
 	}
 
-	Debug.Printf("found SSH Agent: %s", authfile)
+	l.Debug("found SSH Agent: %s", authfile)
 
 	sshAgent, err := net.Dial("unix", authfile)
 	if err != nil {
@@ -110,14 +111,14 @@ func PasswordAuth() ssh.AuthMethod {
 		}
 
 		if !terminal.IsTerminal(int(syscall.Stdin)) {
-			Err(1, nil, "stdin is not a terminal, required by password authentication")
+			l.ErrQuit(1, "stdin is not a terminal, required by password authentication")
 		}
 
 		fmt.Fprintf(os.Stderr, "password: ")
 		password, err := terminal.ReadPassword(int(syscall.Stdin))
 		fmt.Fprintf(os.Stderr, "\n")
 		if err != nil {
-			Err(1, err, "cannot read password")
+			l.ErrQuit(1, "cannot read password")
 		}
 		Config.passwordAuth = ssh.Password(string(password))
 	})
@@ -130,12 +131,12 @@ func AgentAuth() ssh.AuthMethod {
 		return nil
 	}
 
-	Debug.Printf("found SSH Agent: %s", authfile)
+	l.Debug("found SSH Agent: %s", authfile)
 
 	if sshAgent, err := net.Dial("unix", authfile); err == nil {
 		return ssh.PublicKeysCallback(agent.NewClient(sshAgent).Signers)
 	} else {
-		Warn.Printf("warning: fail to create agent client: %s", err)
+		l.Warn("warning: fail to create agent client: %s", err)
 		return nil
 	}
 }

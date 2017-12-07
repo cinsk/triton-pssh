@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	l "github.com/cinsk/triton-pssh/log"
 	"github.com/joyent/triton-go/compute"
 )
 
@@ -70,17 +71,17 @@ func ListInstances(client *compute.ComputeClient, context context.Context, expir
 		var wg sync.WaitGroup
 
 		for {
-			Debug.Printf("ListMachine: offset: %v, limit: %v", offset, limit)
+			l.Debug("ListMachine: offset: %v, limit: %v", offset, limit)
 
 			input := &compute.ListInstancesInput{Offset: offset, Limit: limit}
 			instances, err := loadInstancesFromFile(input, expiration)
 			if err != nil {
 				if instances, err = client.Instances().List(context, input); err != nil {
-					Err(1, err, "ListMachine API failed")
+					l.ErrQuit(1, "ListMachine API failed: %v", err)
 				}
 				err = saveInstancesToFile(input, instances)
 			} else {
-				Debug.Printf("using cached instances offset: %v, limit: %v", offset, limit)
+				l.Debug("using cached instances offset: %v, limit: %v", offset, limit)
 			}
 
 			for _, inst := range instances {

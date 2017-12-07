@@ -5,21 +5,22 @@ import (
 	"io/ioutil"
 	"path/filepath"
 
+	l "github.com/cinsk/triton-pssh/log"
 	"github.com/joyent/triton-go/authentication"
 )
 
-func GetSigners(account string, keyId string, keyPath string) ([]authentication.Signer, error) {
-	Debug.Printf("GetSigner: account=%v, keyId=%v, keyPath=%v", account, keyId, keyPath)
+func GetSignersForTritonAPI(account string, keyId string, keyPath string) ([]authentication.Signer, error) {
+	l.Debug("GetSigner: account=%v, keyId=%v, keyPath=%v", account, keyId, keyPath)
 	signers := []authentication.Signer{}
 
 	if keyPath != "" {
 		privateKey, err := ioutil.ReadFile(keyPath)
 		if err != nil {
-			Info.Printf("cannot read key file matching %s: %s", keyId, err)
+			l.Warn("cannot read key file matching keyid=[%s]: %s", keyId, err)
 		} else {
 			signer, err := authentication.NewPrivateKeySigner(keyId, privateKey, account)
 			if err != nil {
-				Info.Printf("cannot get a signer from %s: %s", keyId, err)
+				l.Warn("cannot get a signer from %s: %s", keyId, err)
 			} else {
 				signers = append(signers, signer)
 			}
@@ -28,7 +29,7 @@ func GetSigners(account string, keyId string, keyPath string) ([]authentication.
 
 	signer, err := authentication.NewSSHAgentSigner(keyId, account)
 	if err != nil {
-		Debug.Printf("cannot get a signer from the ssh agent: %s", err)
+		l.Info("cannot get a signer from the ssh agent: %s", err)
 	} else {
 		signers = append(signers, signer)
 	}
@@ -37,13 +38,13 @@ func GetSigners(account string, keyId string, keyPath string) ([]authentication.
 		default_private_key := filepath.Join(HomeDirectory, ".ssh", "id_rsa")
 		privateKey, err := ioutil.ReadFile(default_private_key)
 		if err != nil {
-			Info.Printf("cannot read key file matching %s: %s", keyId, err)
+			l.Warn("cannot read key file matching %s: %s", keyId, err)
 		} else {
 			signer, err := authentication.NewPrivateKeySigner(keyId, privateKey, account)
 			if err != nil {
-				Info.Printf("cannot get a signer from %s: %s", keyId, err)
+				l.Warn("cannot get a signer from %s: %s", keyId, err)
 			} else {
-				Debug.Printf("use %s as a Triton authentication", default_private_key)
+				l.Debug("select the private key, \"%s\" as a Triton authentication", default_private_key)
 				signers = append(signers, signer)
 			}
 		}

@@ -25,7 +25,7 @@ func NewNetworkCache(client *network.NetworkClient, expiration time.Duration) *N
 	cache := NetworkCache{}
 
 	cache.client = client
-	cache.cache = NewCacheSession(cache.Updater, 1, true, NetworkQueryMaxWorkers)
+	cache.cache = NewCacheSession("network", cache.Updater, 1, true, NetworkQueryMaxWorkers)
 	cache.expiration = expiration
 
 	return &cache
@@ -144,7 +144,7 @@ func network_main() {
 	accountName := os.Getenv("SDC_ACCOUNT")
 	keyPath := os.Getenv("SDC_KEY_FILE")
 	url := os.Getenv("SDC_URL")
-	signers, err := GetSigners(accountName, keyId, keyPath)
+	signers, err := GetSignersForTritonAPI(accountName, keyId, keyPath)
 	if err != nil {
 		fmt.Printf("error: %s\n", err)
 		os.Exit(1)

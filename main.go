@@ -7,12 +7,14 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	l "github.com/cinsk/triton-pssh/log"
 	triton "github.com/joyent/triton-go"
 	"github.com/joyent/triton-go/authentication"
 	"github.com/joyent/triton-go/compute"
@@ -80,6 +82,8 @@ var Options = []OptionSpec{
 	{'2', "scp", NO_ARGUMENT},
 	{'3', "rsync", NO_ARGUMENT},
 }
+
+var ProgramName = path.Base(os.Args[0])
 
 func init() {
 	Config.KeyId = os.Getenv("SDC_KEY_ID")
@@ -153,7 +157,7 @@ func ParseOptions(args []string) []string {
 		opt, err := context.Getopt()
 
 		if err != nil {
-			Err(1, err, "Getopt() failed")
+			l.ErrQuit(1, "Getopt() failed: %v", err)
 		}
 		if opt == nil {
 			break
@@ -167,18 +171,21 @@ func ParseOptions(args []string) []string {
 			Config.KeyId = opt.Argument
 		case "keyfile":
 			Config.KeyPath = ExpandPath(opt.Argument)
+			if !IsExist(Config.KeyPath) {
+				l.ErrQuit(1, "keyfile \"%s\" not found", Config.KeyPath)
+			}
 
 		case "identity":
 			if err := Config.Auth.AddPrivateKey(ExpandPath(opt.Argument)); err != nil {
-				Err(1, err, "cannot add publicKey authentication")
+				l.ErrQuit(1, "cannot add publicKey authentication: %v", err)
 			}
 		case "agent":
 			if err := Config.Auth.AddAgent(); err != nil {
-				Err(1, err, "cannot add SSH agent authentication")
+				l.ErrQuit(1, "cannot add SSH agent authentication: %v", err)
 			}
 		case "password":
 			if err := Config.Auth.AddPassword(); err != nil {
-				Err(1, err, "cannot add password authentication")
+				l.ErrQuit(1, "cannot add password authentication: %v", err)
 			}
 		case "user":
 			Config.User = opt.Argument
@@ -187,7 +194,7 @@ func ParseOptions(args []string) []string {
 			if err == nil {
 				Config.ServerPort = i
 			} else {
-				Err(1, err, "cannot convert %s to numeric value", opt.Argument)
+				l.ErrQuit(1, "cannot convert %s to numeric value: %v", opt.Argument, err)
 			}
 		case "host":
 			Config.ServerNames = append(Config.ServerNames, fmt.Sprintf("name == \"%s\"", opt.Argument))
@@ -195,7 +202,7 @@ func ParseOptions(args []string) []string {
 		case "bastion":
 			user, host, port, err := ParseUserHostPort(opt.Argument)
 			if err != nil {
-				Err(1, err, "cannot parse bastion endpoint")
+				l.ErrQuit(1, "cannot parse bastion endpoint: %v", err)
 			}
 			Config.BastionName = host
 			Config.BastionPort = port
@@ -204,15 +211,15 @@ func ParseOptions(args []string) []string {
 		case "timeout":
 			f, err := strconv.ParseFloat(opt.Argument, 0)
 			if err != nil {
-				Err(1, err, "cannot convert %s to numeric value", opt.Argument)
+				l.ErrQuit(1, "cannot convert %s to numeric value: %v", opt.Argument, err)
 			}
 			Config.Timeout = time.Duration(f * float64(time.Second))
-			Debug.Printf("TIMEOUT: %v\n", Config.Timeout)
+			l.Debug("TIMEOUT: %v\n", Config.Timeout)
 
 		case "deadline":
 			f, err := strconv.ParseFloat(opt.Argument, 0)
 			if err != nil {
-				Err(1, err, "cannot convert %s to numberic value", opt.Argument)
+				l.ErrQuit(1, "cannot convert %s to numberic value: %v", opt.Argument, err)
 			}
 			Config.Deadline = time.Duration(f * float64(time.Second))
 		case "parallel":
@@ -223,7 +230,7 @@ func ParseOptions(args []string) []string {
 				}
 				Config.Parallelism = i
 			} else {
-				Err(1, err, "cannot convert %s to numeric value", opt.Argument)
+				l.ErrQuit(1, "cannot convert %s to numeric value: %v", opt.Argument, err)
 			}
 		case "inline":
 			Config.InlineOutput = true
@@ -233,13 +240,13 @@ func ParseOptions(args []string) []string {
 		case "outdir":
 			dir := ExpandPath(opt.Argument)
 			if err := CheckOutputDirectory(dir, true); err != nil {
-				Err(1, err, "invalid argument")
+				l.ErrQuit(1, "invalid argument: %v", err)
 			}
 			Config.OutDirectory = dir
 		case "errdir":
 			dir := ExpandPath(opt.Argument)
 			if err := CheckOutputDirectory(dir, true); err != nil {
-				Err(1, err, "invalid argument")
+				l.ErrQuit(1, "invalid argument: %v", err)
 			}
 			Config.ErrDirectory = dir
 		case "default-user":
@@ -255,27 +262,32 @@ func ParseOptions(args []string) []string {
 		case "dryrun":
 			Config.DryRun = true
 		default:
-			Err(1, err, "unrecognized option -- %s", opt.LongOption)
+			l.ErrQuit(1, "unrecognized option -- %s: %v", opt.LongOption, err)
 		}
 	}
 
 	if Config.InlineOutput && (Config.OutDirectory != "" || Config.ErrDirectory != "") {
-		Err(1, nil, "inline output(-i,--inline) cannot be used with (-o,--outdir,-e,--errdir)")
+		l.ErrQuit(1, "inline output(-i,--inline) cannot be used with (-o,--outdir,-e,--errdir)")
 	}
 
 	return context.Arguments()
 }
 
 func TritonClientConfig(config *TsshConfig) *triton.ClientConfig {
-	// Debug.Printf("SDC_ACCOUNT: %s", config.AccountName)
-	// Debug.Printf("SDC_KEY_ID: %s", config.KeyId)
-	// Debug.Printf("SDC_KEY_FILE: %s", config.KeyPath)
-
 	signers := []authentication.Signer{}
 
-	signers, err := GetSigners(config.AccountName, config.KeyId, config.KeyPath)
+	if config.AccountName == "" {
+		l.Err("SDC_ACCOUNT enviornment variable is not set")
+		l.ErrQuit(1, "Consider running 'eval \"$(triton env YOUR-PROFILE)\"'.")
+	}
+	if config.KeyId == "" {
+		l.Err("SDC_KEY_ID environment variable is not set.")
+		l.ErrQuit(1, "Consider running 'eval \"$(triton env YOUR-PROFILE)\"'.")
+	}
+
+	signers, err := GetSignersForTritonAPI(config.AccountName, config.KeyId, config.KeyPath)
 	if err != nil {
-		Err(1, err, "cannot get a signer for Triton Cloud API")
+		l.ErrQuit(1, "cannot get a signer for Triton Cloud API: %v", err)
 	}
 
 	c := triton.ClientConfig{TritonURL: config.TritonURL, MantaURL: os.Getenv("MANTA_URL"),
@@ -288,8 +300,8 @@ func TritonClientConfig(config *TsshConfig) *triton.ClientConfig {
 
 func SplitArgs(args []string) (string, []string) {
 	if Config.PrintMode == MODE_PSSH && len(args) < 2 {
-		Err(0, nil, "wrong number of argument(s)")
-		Err(1, nil, "Try with --help for more")
+		l.Err("wrong number of argument(s)")
+		l.ErrQuit(1, "Try with '--help' for more")
 	}
 
 	var exprbuf bytes.Buffer
@@ -321,12 +333,12 @@ func SplitArgs(args []string) (string, []string) {
 	}
 
 	if p == "" {
-		Err(1, nil, "no expression specified")
+		l.ErrQuit(1, "no expression specified")
 	}
 
 	if Config.PrintMode == MODE_PSSH && len(commands) == 0 {
-		Err(0, nil, "no command specified")
-		Err(1, nil, "you might miss to use ::: delimiter")
+		l.Err("no command specified")
+		l.ErrQuit(1, "you might miss to use ':::' delimiter")
 	}
 
 	return p, commands
@@ -347,7 +359,7 @@ func StdinFile() (*os.File, error) {
 		return nil, fmt.Errorf("cannot copy STDIN to tmp file(%s): %s\n", input.Name(), err)
 	}
 
-	Debug.Printf("read %d bytes from STDIN stored to %s\n", nwritten, input.Name())
+	l.Debug("read %d bytes from STDIN stored to %s\n", nwritten, input.Name())
 	return input, nil
 }
 
@@ -372,36 +384,42 @@ func IsDockerContainer(instance *compute.Instance) bool {
 }
 
 func main() {
+	l.InitFromEnvironment("TP_LOG")
+
 	if TritonProfileName == "" {
-		Err(1, nil, "cannot determine Triton Profile from TRITON_PROFILE env")
+		l.Err("cannot determine Triton Profile from TRITON_PROFILE environment variable")
+		l.ErrQuit(1, "Consider running 'eval \"$(triton env YOUR-PROFILE)\"'.")
 	}
 
-	Debug.Printf("Os.Args: %v\n", os.Args)
-	args := ParseOptions(append(OptionsFromInitFile(), os.Args[1:]...))
-	Debug.Printf("Config: %v", Config)
+	l.Debug("Os.Args: %v\n", os.Args)
+
+	initOptions := OptionsFromInitFile()
+	l.Debug("Options From the option file: %v\n", initOptions)
+	args := ParseOptions(append(initOptions, os.Args[1:]...))
+	l.Debug("Config: %v", Config)
 
 	expr, cmdline := SplitArgs(args)
 	// if Config.Interactive && cmdline != "" {
 	// 	Err(1, nil, "interactive mode cannot accept COMMAND...")
 	// }
 
-	Debug.Printf("Filter Expr: %s\n", expr)
-	Debug.Printf("Command: %s\n", cmdline)
+	l.Debug("Filter Expr: %s\n", expr)
+	l.Debug("Command: %s\n", cmdline)
 
 	if Config.TritonURL == "" {
-		Err(1, nil, "missing Triton endpoint. SDC_URL undefined")
+		l.ErrQuit(1, "missing Triton endpoint. SDC_URL undefined")
 	}
 
 	tritonConfig := TritonClientConfig(&Config)
 
 	tritonClient, err := compute.NewClient(tritonConfig)
 	if err != nil {
-		Err(1, err, "cannot create Triton compute client")
+		l.ErrQuit(1, "cannot create Triton compute client")
 	}
 
 	ImgCache = NewImageCache(tritonClient.Images(), Config.ImageCacheExpiration)
 	if nClient, err := network.NewClient(tritonConfig); err != nil {
-		Err(1, err, "cannot create Triton network client")
+		l.ErrQuit(1, "cannot create Triton network client")
 	} else {
 		NetCache = NewNetworkCache(nClient, Config.NetworkCacheExpiration)
 	}
@@ -409,7 +427,7 @@ func main() {
 	if Config.BastionName != "" {
 		addr, user, err := getBastion(tritonClient, context.Background(), Config.BastionName)
 		if err != nil {
-			Err(1, err, "cannot determine bastion server")
+			l.ErrQuit(1, "cannot determine bastion server: %v", err)
 		}
 		Config.BastionAddress = addr
 
@@ -449,10 +467,9 @@ func main() {
 
 		result, error := Evaluate(instance, img, expr)
 		if error != nil {
-			Err(1, error, "evaluation failed")
+			l.ErrQuit(1, "evaluation failed: %v", error)
 		}
 		if r := bool(result); !r {
-			Debug.Printf("INSTANCE[%v]: skipped \n", instance.Name)
 			continue
 		}
 
@@ -462,7 +479,7 @@ func main() {
 
 		job, err := SSH.BuildJob(instance, Config.Auth.Methods(), cmdline, inputFile)
 		if err != nil {
-			Warn.Printf("warning: cannot create SSH job: %s", err)
+			l.Warn("warning: cannot create SSH job: %s", err)
 			continue
 		}
 		job.DryRun = Config.DryRun
@@ -470,11 +487,11 @@ func main() {
 		if Config.PrintMode != MODE_PSSH {
 			err := SSH.PrintConf(job, Config.PrintMode)
 			if err != nil {
-				Err(1, err, "failed to build the command-line")
+				l.ErrQuit(1, "failed to build the command-line: %v", err)
 			}
 			if matched == 0 {
-				Err(0, nil, "no instance matched to your request.")
-				Err(1, nil, "Consider using `--no-cache' option to update the cache")
+				l.Err("no instance matched to your request.")
+				l.ErrQuit(1, "Consider using `--no-cache' option to update the cache")
 			}
 			os.Exit(0)
 		}
@@ -500,7 +517,7 @@ func main() {
 
 		header := BuildResultHeader(count, &result, color)
 		fmt.Fprintf(os.Stderr, "%s\n", header)
-		Debug.Printf("Status: [%T] %v", result.Status, result.Status)
+		l.Debug("Status: [%T] %v", result.Status, result.Status)
 
 		if Config.InlineOutput && result.Stdout != nil {
 			io.Copy(os.Stdout, result.Stdout)
@@ -511,8 +528,8 @@ func main() {
 	SSH.Close()
 
 	if matched == 0 {
-		Err(0, nil, "no instance matched to your request.")
-		Err(1, nil, "Consider using `--no-cache' option to update the cache")
+		l.Err("no instance matched to your request.")
+		l.ErrQuit(1, "Consider using `--no-cache' option to update the cache")
 	}
 }
 

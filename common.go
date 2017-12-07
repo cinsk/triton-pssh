@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	l "github.com/cinsk/triton-pssh/log"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -120,7 +121,7 @@ func UserHomeDirectory() string {
 	if home == "" {
 		usr, err := user.Current()
 		if err != nil {
-			Err(1, err, "cannot determine home directory")
+			l.ErrQuit(1, "cannot determine home directory: %v", err)
 		}
 		return usr.HomeDir
 	}
@@ -132,6 +133,14 @@ func ExpandPath(s string) string {
 		return filepath.Join(HomeDirectory, s[2:])
 	}
 	return s
+}
+
+func IsExist(path string) bool {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true
+	}
+	return os.IsExist(err)
 }
 
 func (config TsshConfig) String() string {

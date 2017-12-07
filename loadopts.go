@@ -8,6 +8,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	l "github.com/cinsk/triton-pssh/log"
 )
 
 const OPTION_FILENAME = "triton-pssh.options"
@@ -28,7 +30,7 @@ func OptionsFromInitFile() []string {
 		if os.IsNotExist(err) {
 			CreateInitFile(initfile)
 		}
-		Warn.Printf("cannot open init file, %v", initfile)
+		l.Warn("cannot open init file, %v", initfile)
 		return nil
 	}
 	defer file.Close()
@@ -40,7 +42,7 @@ func OptionsFromInitFile() []string {
 		line := strings.TrimSpace(scanner.Text())
 		if len(line) != 0 && line[0] != '#' {
 			if line == ":::" {
-				Err(1, nil, "%s: \":::\" must not be part of options", OPTION_FILENAME)
+				l.ErrQuit(1, "%s: \":::\" must not be part of options", OPTION_FILENAME)
 			}
 			options = append(options, line)
 		}

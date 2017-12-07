@@ -24,7 +24,7 @@ func NewImageCache(client *compute.ImagesClient, expiration time.Duration) *Imag
 	cache := ImageCache{}
 
 	cache.client = client
-	cache.cache = NewCacheSession(cache.Updater, 1, true, ImageQueryMaxWorkers)
+	cache.cache = NewCacheSession("image", cache.Updater, 1, true, ImageQueryMaxWorkers)
 	cache.expiration = expiration
 
 	return &cache
@@ -120,7 +120,7 @@ func images_main() {
 	keyPath := os.Getenv("SDC_KEY_FILE")
 	url := os.Getenv("SDC_URL")
 
-	signers, err := GetSigners(accountName, keyId, keyPath)
+	signers, err := GetSignersForTritonAPI(accountName, keyId, keyPath)
 	if err != nil {
 		fmt.Printf("error: %s\n", err)
 		os.Exit(1)
