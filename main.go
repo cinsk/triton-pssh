@@ -386,17 +386,17 @@ func IsDockerContainer(instance *compute.Instance) bool {
 func main() {
 	l.InitFromEnvironment("TP_LOG")
 
-	if TritonProfileName == "" {
-		l.Err("cannot determine Triton Profile from TRITON_PROFILE environment variable")
-		l.ErrQuit(1, "Consider running 'eval \"$(triton env YOUR-PROFILE)\"'.")
-	}
-
 	l.Debug("Os.Args: %v\n", os.Args)
 
 	initOptions := OptionsFromInitFile()
 	l.Debug("Options From the option file: %v\n", initOptions)
 	args := ParseOptions(append(initOptions, os.Args[1:]...))
 	l.Debug("Config: %v", Config)
+
+	if TritonProfileName == "" {
+		l.Err("cannot determine Triton Profile from TRITON_PROFILE environment variable")
+		l.ErrQuit(1, "Consider running 'eval \"$(triton env YOUR-PROFILE)\"'.")
+	}
 
 	expr, cmdline := SplitArgs(args)
 	// if Config.Interactive && cmdline != "" {
