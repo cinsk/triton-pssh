@@ -63,6 +63,7 @@ var Options = []OptionSpec{
 	{'P', "port", ARGUMENT_REQUIRED},
 
 	{'b', "bastion", ARGUMENT_REQUIRED},
+	{'B', "force-bastion", NO_ARGUMENT},
 
 	{'T', "timeout", ARGUMENT_REQUIRED},
 	{'t', "deadline", ARGUMENT_REQUIRED},
@@ -125,6 +126,7 @@ Option:
 
   -b, --bastion=ENDPOINT   the endpoint([user@]name[:port]) of bastion server,
                              name must be a Triton instance name
+  -B, --force-bastion      use bastion even for an instance with public IP.
 
   -T, --timeout=TIMEOUT    the connection timeout of the SSH session
   -t, --deadline=TIMEOUT   the timeout of the SSH session
@@ -207,6 +209,9 @@ func ParseOptions(args []string) []string {
 			Config.BastionName = host
 			Config.BastionPort = port
 			Config.BastionUser = user
+
+		case "force-bastion":
+			Config.ForceBastionOnPublicHost = true
 
 		case "timeout":
 			f, err := strconv.ParseFloat(opt.Argument, 0)
@@ -436,6 +441,8 @@ func main() {
 		}
 	}
 
+	l.Debug("Config: %v", Config)
+
 	// hasPublicNet, userPublicNet := GetHasPublicNetwork(tritonConfig)
 	// hasPublicNet, userPublicNet := GetHasPublicNetwork(tritonConfig)
 	// UserFunctions["haspublic"] = userPublicNet
@@ -477,7 +484,7 @@ func main() {
 		// fmt.Printf("INSTANCE[%v]: hasPublicNet(%v)\n", instance.Name, hasPublicNet(instance))
 		// fmt.Printf("# %s [%v]:\n", instance.ID, instance.Name)
 
-		job, err := SSH.BuildJob(instance, Config.Auth.Methods(), cmdline, inputFile)
+		job, err := SSH.BuildJob(instance, &Config, cmdline, inputFile)
 		if err != nil {
 			l.Warn("warning: cannot create SSH job: %s", err)
 			continue

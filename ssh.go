@@ -86,7 +86,7 @@ func NewSshSession(config *TsshConfig, nworkers int) *SshSession {
 	return &session
 }
 
-func (s *SshSession) BuildJob(instance *compute.Instance, auths []ssh.AuthMethod, command []string, stdin *os.File) (*SshJob, error) {
+func (s *SshSession) BuildJob(instance *compute.Instance, config *TsshConfig, command []string, stdin *os.File) (*SshJob, error) {
 	user := s.config.User
 	if user == "" {
 		img, _ := ImgCache.Get(instance.Image)
@@ -99,25 +99,26 @@ func (s *SshSession) BuildJob(instance *compute.Instance, auths []ssh.AuthMethod
 
 	job.ServerConfig = &ssh.ClientConfig{
 		User:            user,
-		Auth:            auths,
+		Auth:            config.Auth.Methods(),
 		Timeout:         s.config.Timeout,
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
 	}
 	job.Server = fmt.Sprintf("%s:%d", instance.PrimaryIP, s.config.ServerPort)
 
-	if !public {
-		if s.config.BastionAddress == "" {
-			return nil, fmt.Errorf("cannot connect to the instance(%s) without bastion server", instance.Name)
-		}
+	if !public && s.config.BastionAddress == "" {
+		return nil, fmt.Errorf("cannot connect to the instance(%s) without bastion server", instance.Name)
+	}
 
+	if !public || config.ForceBastionOnPublicHost {
 		job.BastionConfig = &ssh.ClientConfig{
 			User:            s.config.BastionUser,
-			Auth:            auths,
+			Auth:            config.Auth.Methods(),
 			Timeout:         s.config.Timeout,
 			HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil },
 		}
 		job.Bastion = fmt.Sprintf("%s:%d", s.config.BastionAddress, s.config.BastionPort)
 	}
+
 	job.Command = command
 	job.InstanceID = instance.ID
 	job.InstanceName = instance.Name
@@ -446,6 +447,7 @@ func PrintRsyncConf(out *bytes.Buffer, bastion string, bastionPort string, basti
 
 func PrintSshConf(out *bytes.Buffer, bastion string, bastionPort string, bastionUser string, host string, hostPort string, hostUser string, command []string) error {
 	// the output should be the bash array literal, (".." "..." ...)
+	fmt.Printf("PrintSshConf: bastion = %v, buser=%v\n", bastion, bastionUser)
 	var bEndpoint, hEndpoint string
 	if bastionUser == "" {
 		bEndpoint = fmt.Sprintf("%s", bastion)

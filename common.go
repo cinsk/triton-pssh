@@ -33,6 +33,8 @@ type TsshConfig struct {
 	BastionPort    int
 	BastionAddress string
 
+	ForceBastionOnPublicHost bool
+
 	Deadline time.Duration // time.Duration
 	Timeout  time.Duration // time.Duration
 
