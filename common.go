@@ -99,7 +99,7 @@ var NetworkQueryMaxTries = 2
 var ImgCache *ImageCache
 var NetCache *NetworkCache
 
-const VERSION_STRING = "1.0.4"
+const VERSION_STRING = "1.0.5"
 const UNKNOWN_TRITON_PROFILE = "__unknown__"
 const TSSH_ROOT = ".triton-pssh"
 const (
