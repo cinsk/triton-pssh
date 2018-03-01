@@ -447,7 +447,6 @@ func PrintRsyncConf(out *bytes.Buffer, bastion string, bastionPort string, basti
 
 func PrintSshConf(out *bytes.Buffer, bastion string, bastionPort string, bastionUser string, host string, hostPort string, hostUser string, command []string) error {
 	// the output should be the bash array literal, (".." "..." ...)
-	fmt.Printf("PrintSshConf: bastion = %v, buser=%v\n", bastion, bastionUser)
 	var bEndpoint, hEndpoint string
 	if bastionUser == "" {
 		bEndpoint = fmt.Sprintf("%s", bastion)

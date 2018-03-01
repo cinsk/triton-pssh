@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -61,6 +62,8 @@ type TsshConfig struct {
 	PrintMode PrintConfMode
 
 	DryRun bool
+
+	InstanceLimits uint64
 }
 
 var Config TsshConfig = TsshConfig{
@@ -80,6 +83,8 @@ var Config TsshConfig = TsshConfig{
 	NetworkCacheExpiration:  time.Duration(24*7) * time.Hour,
 	ImageCacheExpiration:    time.Duration(24*7) * time.Hour,
 	InstanceCacheExpiration: time.Duration(24) * time.Hour,
+
+	InstanceLimits: math.MaxUint64,
 }
 
 var HomeDirectory string

@@ -82,6 +82,8 @@ var Options = []OptionSpec{
 	{'1', "ssh", NO_ARGUMENT},
 	{'2', "scp", NO_ARGUMENT},
 	{'3', "rsync", NO_ARGUMENT},
+
+	{'n', "limit", ARGUMENT_REQUIRED},
 }
 
 var ProgramName = path.Base(os.Args[0])
@@ -124,14 +126,15 @@ Option:
   -u, --user=USER          the username of the remote hosts
   -P, --port=PORT          the SSH port of the remote hosts
 
-  -b, --bastion=ENDPOINT   the endpoint([user@]name[:port]) of bastion server,
-                             name must be a Triton instance name
+  -b, --bastion=ENDPOINT   the endpoint([user@]NAME[:port]) of bastion server,
+                             NAME must be a Triton instance name
   -B, --force-bastion      use bastion even for an instance with public IP.
 
   -T, --timeout=TIMEOUT    the connection timeout of the SSH session
   -t, --deadline=TIMEOUT   the timeout of the SSH session
 
   -p, --parallel=MAXPROC   the max number of SSH connection at a time
+  -n, --limit=LIMIT        Use only LIMIT instances at most
 
       --help               display this help and exit
       --version            output version information and exit
@@ -266,6 +269,13 @@ func ParseOptions(args []string) []string {
 			Config.PrintMode = MODE_RSYNC
 		case "dryrun":
 			Config.DryRun = true
+		case "limit":
+			i, err := strconv.ParseUint(opt.Argument, 10, 64)
+			if err == nil {
+				Config.InstanceLimits = i
+			} else {
+				l.ErrQuit(1, "cannot convert %s to numeric value: %v", opt.Argument, err)
+			}
 		default:
 			l.ErrQuit(1, "unrecognized option -- %s: %v", opt.LongOption, err)
 		}
@@ -462,7 +472,7 @@ func main() {
 
 	jobWg := sync.WaitGroup{}
 	resultChannel := make(chan SshResult)
-	matched := 0
+	var matched uint64 = 0
 	for instance := range instanceChan {
 		if IsDockerContainer(instance) {
 			continue
@@ -483,6 +493,10 @@ func main() {
 		matched++
 		// fmt.Printf("INSTANCE[%v]: hasPublicNet(%v)\n", instance.Name, hasPublicNet(instance))
 		// fmt.Printf("# %s [%v]:\n", instance.ID, instance.Name)
+
+		if matched > Config.InstanceLimits {
+			break
+		}
 
 		job, err := SSH.BuildJob(instance, &Config, cmdline, inputFile)
 		if err != nil {
