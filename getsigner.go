@@ -18,7 +18,10 @@ func GetSignersForTritonAPI(account string, keyId string, keyPath string) ([]aut
 		if err != nil {
 			l.Warn("cannot read key file matching keyid=[%s]: %s", keyId, err)
 		} else {
-			signer, err := authentication.NewPrivateKeySigner(keyId, privateKey, account)
+			signer, err := authentication.NewPrivateKeySigner(authentication.PrivateKeySignerInput{
+				KeyID:              keyId,
+				PrivateKeyMaterial: privateKey,
+				AccountName:        account})
 			if err != nil {
 				l.Warn("cannot get a signer from %s: %s", keyId, err)
 			} else {
@@ -27,7 +30,10 @@ func GetSignersForTritonAPI(account string, keyId string, keyPath string) ([]aut
 		}
 	}
 
-	signer, err := authentication.NewSSHAgentSigner(keyId, account)
+	signer, err := authentication.NewSSHAgentSigner(
+		authentication.SSHAgentSignerInput{
+			KeyID:       keyId,
+			AccountName: account})
 	if err != nil {
 		l.Info("cannot get a signer from the ssh agent: %s", err)
 	} else {
@@ -40,7 +46,11 @@ func GetSignersForTritonAPI(account string, keyId string, keyPath string) ([]aut
 		if err != nil {
 			l.Warn("cannot read key file matching %s: %s", keyId, err)
 		} else {
-			signer, err := authentication.NewPrivateKeySigner(keyId, privateKey, account)
+			signer, err := authentication.NewPrivateKeySigner(
+				authentication.PrivateKeySignerInput{
+					KeyID:              keyId,
+					PrivateKeyMaterial: privateKey,
+					AccountName:        account})
 			if err != nil {
 				l.Warn("cannot get a signer from %s: %s", keyId, err)
 			} else {
